@@ -1,12 +1,13 @@
 use anyhow::anyhow;
 use image::{GenericImageView, ImageReader, Pixel, Rgb, Rgba, RgbaImage};
 use log::info;
-use std::cmp;
+use std::{cmp, vec};
 
 use crate::errors::Result;
 
 const MARKER_SCAN_STEP_IN_PERCENT: i32 = 1; // [%]
 const MARKER_SCAN_STEPS: u32 = 30; // If this is 30 and step is 1 then 30% will be scanned.
+const BACKGROUND_SCAN_STEPS: u32 = 5;
 
 pub fn extract(filepath: impl Into<String>) -> Result<()> {
     let filepath = filepath.into();
@@ -18,11 +19,18 @@ pub fn extract(filepath: impl Into<String>) -> Result<()> {
     info!("Locating markers...");
     let markers = Markers::find(&img)?;
 
+    info!("Analysing background...");
+    let background = Background::analyse(&img, &markers)?;
+
+    for area in background.areas {
+        area.color(&mut img, &[0, 255, 0]);
+    }
+
     info!("Coloring markers...");
-    markers.top_left.color(&mut img);
-    markers.top_right.color(&mut img);
-    markers.bottom_left.color(&mut img);
-    markers.bottom_right.color(&mut img);
+    markers.top_left.color(&mut img, &[255, 0, 0]);
+    markers.top_right.color(&mut img, &[255, 0, 0]);
+    markers.bottom_left.color(&mut img, &[255, 0, 0]);
+    markers.bottom_right.color(&mut img, &[255, 0, 0]);
 
     info!("Writing image...");
     img.save("empty.png")?;
@@ -82,6 +90,39 @@ impl Markers {
             bottom_left,
             bottom_right,
         })
+    }
+}
+
+struct Background {
+    areas: Vec<Area>,
+}
+
+impl Background {
+    fn analyse(img: &RgbaImage, markers: &Markers) -> Result<Background> {
+        let mut areas = vec![];
+
+        let top_width = markers.top_right.left
+            - markers.top_left.right()
+            - 2 * markers.top_left.width
+            - 2 * markers.top_right.width;
+
+        for xi in 0..BACKGROUND_SCAN_STEPS {
+            let fraction = xi as f32 / (BACKGROUND_SCAN_STEPS - 1) as f32;
+
+            let y = (markers.top_left.top as f32 + (fraction * (markers.top_right.top as f32 - markers.top_left.top as f32))) as u32;
+            let x = markers.top_left.right()
+                + markers.top_left.width
+                + (top_width as f32 * fraction) as u32;
+
+            areas.push(Area{
+                top: y,
+                left: x,
+                height: markers.top_left.height,
+                width: markers.top_left.width,
+            });
+        }
+
+        Ok(Background{areas})
     }
 }
 
@@ -264,10 +305,10 @@ impl Area {
         }
     }
 
-    fn color(&self, img: &mut RgbaImage) {
+    fn color(&self, img: &mut RgbaImage, color: &[u8; 3]) {
         for x in self.left..self.right() {
             for y in self.top..self.bottom() {
-                img.put_pixel(x, y, Rgb([255, 0, 0]).to_rgba());
+                img.put_pixel(x, y, Rgb(*color).to_rgba());
             }
         }
     }
