@@ -1,68 +1,12 @@
 use crate::errors::Result;
 use anyhow::anyhow;
-use image::{ImageReader, Pixel, Rgb, Rgba, RgbaImage};
-use log::info;
+use image::{Pixel, Rgb, RgbaImage};
 use std::{cmp, collections::HashSet};
 
 const MARKER_SCAN_STEP_IN_PERCENT: i32 = 1; // [%]
 const MARKER_SCAN_STEPS: u32 = 30; // If this is 30 and step is 1 then 30% will be scanned.
 
-pub fn extract(filepath: impl Into<String>) -> Result<()> {
-    let filepath = filepath.into();
-
-    info!("Opening image...");
-    let img = ImageReader::open(filepath)?.decode()?;
-    let mut img = img.to_rgba8();
-
-    info!("Locating markers...");
-    let markers = Markers::find(&img)?;
-
-    info!("Analysing background...");
-    let background = Background::analyse(&img, &markers)?;
-
-    info!("Coloring markers...");
-    markers.top_left.color(&mut img, &[255, 0, 0]);
-    markers.top_right.color(&mut img, &[255, 0, 0]);
-    markers.bottom_left.color(&mut img, &[255, 0, 0]);
-    markers.bottom_right.color(&mut img, &[255, 0, 0]);
-
-    background
-        .top_left
-        .color(&mut img, &background.top_left_color.rgb());
-    background
-        .top_right
-        .color(&mut img, &background.top_right_color.rgb());
-    background
-        .bottom_left
-        .color(&mut img, &background.bottom_left_color.rgb());
-    background
-        .bottom_right
-        .color(&mut img, &background.bottom_right_color.rgb());
-
-    info!("Removing background...");
-    let mut pixels = HashSet::new();
-    flood_fill_child(
-        &img,
-        &XY {
-            x: background.top_left.left,
-            y: background.top_left.top,
-        },
-        &mut pixels,
-        &|xy, yuv| {
-            yuv.y < 0.5 && yuv.u.abs() < 0.1 && yuv.v.abs() < 0.1
-        },
-    );
-    for pixel in pixels {
-        img.put_pixel(pixel.x, pixel.y, Rgba([0, 0, 0, 0]));
-    }
-
-    info!("Writing image...");
-    img.save("empty.png")?;
-
-    Ok(())
-}
-
-struct Markers {
+pub struct Markers {
     top_left: Area,
     top_right: Area,
     bottom_left: Area,
@@ -70,7 +14,7 @@ struct Markers {
 }
 
 impl Markers {
-    fn find(img: &RgbaImage) -> Result<Markers> {
+    pub fn find(img: &RgbaImage) -> Result<Markers> {
         let top_left = Markers::find_marker(img, &Corner::TopLeft)?;
         let top_right = Markers::find_marker(img, &Corner::TopRight)?;
         let bottom_left = Markers::find_marker(img, &Corner::BottomLeft)?;
@@ -149,7 +93,7 @@ impl Markers {
                     return Err(anyhow!("here is a nickel kid, get yourself a bigger image"));
                 }
 
-                if let Some(area) = flood_fill(img, x, y, &match_color) {
+                if let Some(area) = Area::from_pixels(flood_fill(img, x, y, &match_color)) {
                     return Ok(area);
                 }
             }
@@ -157,9 +101,25 @@ impl Markers {
 
         Err(anyhow!("not found"))
     }
+
+    pub fn top_left(&self) -> &Area {
+        &self.top_left
+    }
+
+    pub fn top_right(&self) -> &Area {
+        &self.top_right
+    }
+
+    pub fn bottom_left(&self) -> &Area {
+        &self.bottom_left
+    }
+
+    pub fn bottom_right(&self) -> &Area {
+        &self.bottom_right
+    }
 }
 
-struct Background {
+pub struct Background {
     top_left: Area,
     top_left_color: YUV,
 
@@ -174,7 +134,7 @@ struct Background {
 }
 
 impl Background {
-    fn analyse(img: &RgbaImage, markers: &Markers) -> Result<Background> {
+    pub fn analyse(img: &RgbaImage, markers: &Markers) -> Result<Background> {
         let top_left = markers.top_left.translate(
             2 * markers.top_left.width as i32,
             2 * markers.top_left.height as i32,
@@ -211,6 +171,38 @@ impl Background {
             bottom_right_color,
         })
     }
+
+    pub fn top_left(&self) -> &Area {
+        &self.top_left
+    }
+
+    pub fn top_left_color(&self) -> &YUV {
+        &self.top_left_color
+    }
+
+    pub fn top_right(&self) -> &Area {
+        &self.top_right
+    }
+
+    pub fn top_right_color(&self) -> &YUV {
+        &self.top_right_color
+    }
+
+    pub fn bottom_left(&self) -> &Area {
+        &self.bottom_left
+    }
+
+    pub fn bottom_left_color(&self) -> &YUV {
+        &self.bottom_left_color
+    }
+
+    pub fn bottom_right(&self) -> &Area {
+        &self.bottom_right
+    }
+
+    pub fn bottom_right_color(&self) -> &YUV {
+        &self.bottom_right_color
+    }
 }
 
 enum Corner {
@@ -220,87 +212,89 @@ enum Corner {
     BottomRight,
 }
 
-fn flood_fill<FM>(img: &RgbaImage, x: u32, y: u32, match_color: FM) -> Option<Area>
+pub fn flood_fill<FM>(img: &RgbaImage, x: u32, y: u32, match_color: FM) -> HashSet<XY>
 where
     FM: Fn(&XY, &YUV) -> bool,
 {
     let mut pixels = HashSet::new();
-    flood_fill_child(img, &XY { x, y }, &mut pixels, &match_color);
-    Area::from_pixels(pixels)
-}
+    let mut queue = vec![XY{x, y}];
 
-fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut HashSet<XY>, match_color: &dyn Fn(&XY, &YUV) -> bool)
-{
-    if pixels.contains(xy) {
-        return;
+    loop {
+        let Some(xy) = queue.pop() else {
+            break;
+        };
+
+        if pixels.contains(&xy) {
+            continue;
+        }
+
+        let pixel = img.get_pixel(xy.x, xy.y);
+        let yuv = YUV::from_rgb(&pixel.to_rgb());
+
+        if !match_color(&xy, &yuv) {
+            continue;
+        }
+
+        pixels.insert(xy.clone());
+
+        if xy.x > 0 {
+            queue.push(
+                XY {
+                    x: xy.x - 1,
+                    y: xy.y,
+                },
+            );
+        }
+
+        if xy.y > 0 {
+            queue.push(
+                XY {
+                    x: xy.x,
+                    y: xy.y - 1,
+                },
+            );
+        }
+
+        if xy.x < img.width() - 1 {
+            queue.push(
+                XY {
+                    x: xy.x + 1,
+                    y: xy.y,
+                },
+            );
+        }
+
+        if xy.y < img.height() - 1 {
+            queue.push(
+                XY {
+                    x: xy.x,
+                    y: xy.y + 1,
+                },
+            );
+        }
     }
 
-    let pixel = img.get_pixel(xy.x, xy.y);
-    let yuv = YUV::from_rgb(&pixel.to_rgb());
-
-    if !match_color(xy, &yuv) {
-        return;
-    }
-
-    pixels.insert(xy.clone());
-
-    if xy.x > 0 {
-        flood_fill_child(
-            img,
-            &XY {
-                x: xy.x - 1,
-                y: xy.y,
-            },
-            pixels,
-            &match_color,
-        );
-    }
-
-    if xy.y > 0 {
-        flood_fill_child(
-            img,
-            &XY {
-                x: xy.x,
-                y: xy.y - 1,
-            },
-            pixels,
-            &match_color,
-        );
-    }
-
-    if xy.x < img.width() - 1 {
-        flood_fill_child(
-            img,
-            &XY {
-                x: xy.x + 1,
-                y: xy.y,
-            },
-            pixels,
-            &match_color,
-        );
-    }
-
-    if xy.y < img.height() - 1 {
-        flood_fill_child(
-            img,
-            &XY {
-                x: xy.x,
-                y: xy.y + 1,
-            },
-            pixels,
-            &match_color,
-        );
-    }
+    pixels
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-struct XY {
+pub struct XY {
     x: u32,
     y: u32,
 }
 
+impl XY {
+    pub fn x(&self) -> u32 {
+        self.x
+    }
+
+    pub fn y(&self) -> u32 {
+        self.y
+    }
+}
+
 #[derive(Debug)]
-struct YUV {
+pub struct YUV {
     y: f32,
     u: f32,
     v: f32,
@@ -320,15 +314,27 @@ impl YUV {
         }
     }
 
-    fn rgb(&self) -> [u8; 3] {
+    pub fn rgb(&self) -> [u8; 3] {
         let r = self.y + 1.14 * self.v;
         let g = self.y - 0.395 * self.u * 0.581 * self.v;
         let b = self.y + 2.033 * self.u;
         [(r * 256.0) as u8, (g * 256.0) as u8, (b * 256.0) as u8]
     }
+
+    pub fn y(&self) -> f32 {
+        self.y
+    }
+
+    pub fn u(&self) -> f32 {
+        self.u
+    }
+
+    pub fn v(&self) -> f32 {
+        self.v
+    }
 }
 
-struct Area {
+pub struct Area {
     top: u32,
     left: u32,
     width: u32,
@@ -378,7 +384,7 @@ impl Area {
         }
     }
 
-    fn color(&self, img: &mut RgbaImage, color: &[u8; 3]) {
+    pub fn color(&self, img: &mut RgbaImage, color: &[u8; 3]) {
         for x in self.left..self.right() {
             for y in self.top..self.bottom() {
                 img.put_pixel(x, y, Rgb(*color).to_rgba());
@@ -418,6 +424,22 @@ impl Area {
             u: u.unwrap(),
             v: v.unwrap(),
         }
+    }
+
+    pub fn top(&self) -> u32 {
+        self.top
+    }
+
+    pub fn left(&self) -> u32 {
+        self.left
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
     }
 }
 
