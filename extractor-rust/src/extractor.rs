@@ -1,6 +1,6 @@
 use crate::errors::Result;
 use anyhow::anyhow;
-use image::{ImageReader, Pixel, Rgb, RgbaImage};
+use image::{ImageReader, Pixel, Rgb, Rgba, RgbaImage};
 use log::info;
 use std::{cmp, collections::HashSet};
 
@@ -39,6 +39,23 @@ pub fn extract(filepath: impl Into<String>) -> Result<()> {
         .bottom_right
         .color(&mut img, &background.bottom_right_color.rgb());
 
+    info!("Removing background...");
+    let mut pixels = HashSet::new();
+    flood_fill_child(
+        &img,
+        &XY {
+            x: background.top_left.left,
+            y: background.top_left.top,
+        },
+        &mut pixels,
+        &|xy, yuv| {
+            yuv.y < 0.5 && yuv.u.abs() < 0.1 && yuv.v.abs() < 0.1
+        },
+    );
+    for pixel in pixels {
+        img.put_pixel(pixel.x, pixel.y, Rgba([0, 0, 0, 0]));
+    }
+
     info!("Writing image...");
     img.save("empty.png")?;
 
@@ -54,10 +71,10 @@ struct Markers {
 
 impl Markers {
     fn find(img: &RgbaImage) -> Result<Markers> {
-        let top_left = find_marker(img, &Corner::TopLeft)?;
-        let top_right = find_marker(img, &Corner::TopRight)?;
-        let bottom_left = find_marker(img, &Corner::BottomLeft)?;
-        let bottom_right = find_marker(img, &Corner::BottomRight)?;
+        let top_left = Markers::find_marker(img, &Corner::TopLeft)?;
+        let top_right = Markers::find_marker(img, &Corner::TopRight)?;
+        let bottom_left = Markers::find_marker(img, &Corner::BottomLeft)?;
+        let bottom_right = Markers::find_marker(img, &Corner::BottomRight)?;
 
         if top_left.center().x > top_right.center().x {
             return Err(anyhow!("top left must be to the left of top right"));
@@ -97,6 +114,48 @@ impl Markers {
             bottom_left,
             bottom_right,
         })
+    }
+
+    fn find_marker(img: &RgbaImage, corner: &Corner) -> Result<Area> {
+        let step_x: u32 = cmp::max(
+            1,
+            (MARKER_SCAN_STEP_IN_PERCENT as f32 / 100.0 * img.width() as f32) as u32,
+        );
+        let step_y: u32 = cmp::max(
+            1,
+            (MARKER_SCAN_STEP_IN_PERCENT as f32 / 100.0 * img.height() as f32) as u32,
+        );
+
+        let match_color = |xy: &XY, yuv: &YUV| {
+            yuv.y > 0.8 && yuv.u.abs() < 0.1 && yuv.v.abs() < 0.1
+        };
+
+        for step_x_i in 0..MARKER_SCAN_STEPS {
+            for step_y_i in 0..MARKER_SCAN_STEPS {
+                let x = match corner {
+                    Corner::TopLeft => step_x_i * step_x,
+                    Corner::TopRight => img.width() - 1 - (step_x_i * step_x),
+                    Corner::BottomLeft => step_x_i * step_x,
+                    Corner::BottomRight => img.width() - 1 - (step_x_i * step_x),
+                };
+                let y = match corner {
+                    Corner::TopLeft => step_y_i * step_y,
+                    Corner::TopRight => step_y_i * step_y,
+                    Corner::BottomLeft => img.height() - 1 - (step_y_i * step_y),
+                    Corner::BottomRight => img.height() - 1 - (step_y_i * step_y),
+                };
+
+                if x >= img.width() || y >= img.height() {
+                    return Err(anyhow!("here is a nickel kid, get yourself a bigger image"));
+                }
+
+                if let Some(area) = flood_fill(img, x, y, &match_color) {
+                    return Ok(area);
+                }
+            }
+        }
+
+        Err(anyhow!("not found"))
     }
 }
 
@@ -161,51 +220,17 @@ enum Corner {
     BottomRight,
 }
 
-fn find_marker(img: &RgbaImage, corner: &Corner) -> Result<Area> {
-    let step_x: u32 = cmp::max(
-        1,
-        (MARKER_SCAN_STEP_IN_PERCENT as f32 / 100.0 * img.width() as f32) as u32,
-    );
-    let step_y: u32 = cmp::max(
-        1,
-        (MARKER_SCAN_STEP_IN_PERCENT as f32 / 100.0 * img.height() as f32) as u32,
-    );
-
-    for step_x_i in 0..MARKER_SCAN_STEPS {
-        for step_y_i in 0..MARKER_SCAN_STEPS {
-            let x = match corner {
-                Corner::TopLeft => step_x_i * step_x,
-                Corner::TopRight => img.width() - 1 - (step_x_i * step_x),
-                Corner::BottomLeft => step_x_i * step_x,
-                Corner::BottomRight => img.width() - 1 - (step_x_i * step_x),
-            };
-            let y = match corner {
-                Corner::TopLeft => step_y_i * step_y,
-                Corner::TopRight => step_y_i * step_y,
-                Corner::BottomLeft => img.height() - 1 - (step_y_i * step_y),
-                Corner::BottomRight => img.height() - 1 - (step_y_i * step_y),
-            };
-
-            if x >= img.width() || y >= img.height() {
-                return Err(anyhow!("here is a nickel kid, get yourself a bigger image"));
-            }
-
-            if let Some(area) = flood_fill(img, x, y) {
-                return Ok(area);
-            }
-        }
-    }
-
-    Err(anyhow!("not found"))
-}
-
-fn flood_fill(img: &RgbaImage, x: u32, y: u32) -> Option<Area> {
+fn flood_fill<FM>(img: &RgbaImage, x: u32, y: u32, match_color: FM) -> Option<Area>
+where
+    FM: Fn(&XY, &YUV) -> bool,
+{
     let mut pixels = HashSet::new();
-    flood_fill_child(img, &XY { x, y }, &mut pixels);
+    flood_fill_child(img, &XY { x, y }, &mut pixels, &match_color);
     Area::from_pixels(pixels)
 }
 
-fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut HashSet<XY>) {
+fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut HashSet<XY>, match_color: &dyn Fn(&XY, &YUV) -> bool)
+{
     if pixels.contains(xy) {
         return;
     }
@@ -213,7 +238,7 @@ fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut HashSet<XY>) {
     let pixel = img.get_pixel(xy.x, xy.y);
     let yuv = YUV::from_rgb(&pixel.to_rgb());
 
-    if yuv.y < 0.8 || yuv.u.abs() > 0.1 || yuv.v.abs() > 0.1 {
+    if !match_color(xy, &yuv) {
         return;
     }
 
@@ -227,6 +252,7 @@ fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut HashSet<XY>) {
                 y: xy.y,
             },
             pixels,
+            &match_color,
         );
     }
 
@@ -238,6 +264,7 @@ fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut HashSet<XY>) {
                 y: xy.y - 1,
             },
             pixels,
+            &match_color,
         );
     }
 
@@ -249,6 +276,7 @@ fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut HashSet<XY>) {
                 y: xy.y,
             },
             pixels,
+            &match_color,
         );
     }
 
@@ -260,6 +288,7 @@ fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut HashSet<XY>) {
                 y: xy.y + 1,
             },
             pixels,
+            &match_color,
         );
     }
 }
