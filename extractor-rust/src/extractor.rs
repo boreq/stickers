@@ -13,14 +13,33 @@ pub fn extract(filepath: impl Into<String>) -> Result<()> {
     let img = ImageReader::open(filepath)?.decode()?;
     let mut img = img.to_rgba8();
 
-    let marker = find_marker(&mut img, &Corner::TopLeft)?;
-    let marker = find_marker(&mut img, &Corner::TopRight)?;
-    let marker = find_marker(&mut img, &Corner::BottomLeft)?;
-    let marker = find_marker(&mut img, &Corner::BottomRight)?;
+    let markers = Markers::find(&img)?;
 
+    markers.top_left.color(&mut img);
+    markers.top_right.color(&mut img);
+    markers.bottom_left.color(&mut img);
+    markers.bottom_right.color(&mut img);
     img.save("empty.png")?;
 
     Ok(())
+}
+
+struct Markers {
+    top_left: Area,
+    top_right: Area,
+    bottom_left: Area,
+    bottom_right: Area,
+}
+
+impl Markers {
+    fn find(img: &RgbaImage) -> Result<Markers> {
+        Ok(Markers {
+            top_left: find_marker(img, &Corner::TopLeft)?,
+            top_right: find_marker(img, &Corner::TopRight)?,
+            bottom_left: find_marker(img, &Corner::BottomLeft)?,
+            bottom_right: find_marker(img, &Corner::BottomRight)?,
+        })
+    }
 }
 
 enum Corner {
@@ -30,7 +49,7 @@ enum Corner {
     BottomRight,
 }
 
-fn find_marker(img: &mut RgbaImage, corner: &Corner) -> Result<Area> {
+fn find_marker(img: &RgbaImage, corner: &Corner) -> Result<Area> {
     let step_x: u32 = cmp::max(
         1,
         (MARKER_SCAN_STEP_IN_PERCENT as f32 / 100.0 * img.width() as f32) as u32,
@@ -60,11 +79,6 @@ fn find_marker(img: &mut RgbaImage, corner: &Corner) -> Result<Area> {
             }
 
             if let Some(area) = flood_fill(img, x, y) {
-                for x in area.left..area.right() {
-                    for y in area.top..area.bottom() {
-                        img.put_pixel(x, y, Rgb([255, 0, 0]).to_rgba());
-                    }
-                }
                 return Ok(area);
             }
         }
@@ -192,20 +206,20 @@ impl Area {
         })
     }
 
-    //fn extend(&self, other: Area) -> Area{
-    //    let top = cmp::min(self.top, other.top);
-    //    let left=  cmp::min(self.left, other.left);
-    //    let right = cmp::max(self.right(), other.right());
-    //    let bottom = cmp::max(self.bottom(), other.bottom());
-
-    //}
-
     fn right(&self) -> u32 {
         self.left + self.width
     }
 
     fn bottom(&self) -> u32 {
         self.top + self.height
+    }
+
+    fn color(&self, img: &mut RgbaImage) {
+        for x in self.left..self.right() {
+            for y in self.top..self.bottom() {
+                img.put_pixel(x, y, Rgb([255, 0, 0]).to_rgba());
+            }
+        }
     }
 }
 
