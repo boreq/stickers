@@ -1,13 +1,11 @@
+use crate::errors::Result;
 use anyhow::anyhow;
-use image::{GenericImageView, ImageReader, Pixel, Rgb, Rgba, RgbaImage};
+use image::{ImageReader, Pixel, Rgb, RgbaImage};
 use log::info;
 use std::{cmp, vec};
 
-use crate::errors::Result;
-
 const MARKER_SCAN_STEP_IN_PERCENT: i32 = 1; // [%]
 const MARKER_SCAN_STEPS: u32 = 30; // If this is 30 and step is 1 then 30% will be scanned.
-const BACKGROUND_SCAN_STEPS: u32 = 5;
 
 pub fn extract(filepath: impl Into<String>) -> Result<()> {
     let filepath = filepath.into();
@@ -22,15 +20,24 @@ pub fn extract(filepath: impl Into<String>) -> Result<()> {
     info!("Analysing background...");
     let background = Background::analyse(&img, &markers)?;
 
-    for area in background.areas {
-        area.color(&mut img, &[0, 255, 0]);
-    }
-
     info!("Coloring markers...");
     markers.top_left.color(&mut img, &[255, 0, 0]);
     markers.top_right.color(&mut img, &[255, 0, 0]);
     markers.bottom_left.color(&mut img, &[255, 0, 0]);
     markers.bottom_right.color(&mut img, &[255, 0, 0]);
+
+    background
+        .top_left
+        .color(&mut img, &background.top_left_color.rgb());
+    background
+        .top_right
+        .color(&mut img, &background.top_right_color.rgb());
+    background
+        .bottom_left
+        .color(&mut img, &background.bottom_left_color.rgb());
+    background
+        .bottom_right
+        .color(&mut img, &background.bottom_right_color.rgb());
 
     info!("Writing image...");
     img.save("empty.png")?;
@@ -94,35 +101,56 @@ impl Markers {
 }
 
 struct Background {
-    areas: Vec<Area>,
+    top_left: Area,
+    top_left_color: YUV,
+
+    top_right: Area,
+    top_right_color: YUV,
+
+    bottom_left: Area,
+    bottom_left_color: YUV,
+
+    bottom_right: Area,
+    bottom_right_color: YUV,
 }
 
 impl Background {
     fn analyse(img: &RgbaImage, markers: &Markers) -> Result<Background> {
-        let mut areas = vec![];
+        let top_left = markers.top_left.translate(
+            2 * markers.top_left.width as i32,
+            2 * markers.top_left.height as i32,
+        );
 
-        let top_width = markers.top_right.left
-            - markers.top_left.right()
-            - 2 * markers.top_left.width
-            - 2 * markers.top_right.width;
+        let top_right = markers.top_right.translate(
+            -2 * markers.top_right.width as i32,
+            2 * markers.top_right.height as i32,
+        );
 
-        for xi in 0..BACKGROUND_SCAN_STEPS {
-            let fraction = xi as f32 / (BACKGROUND_SCAN_STEPS - 1) as f32;
+        let bottom_left = markers.bottom_left.translate(
+            2 * markers.bottom_left.width as i32,
+            -2 * markers.bottom_left.height as i32,
+        );
 
-            let y = (markers.top_left.top as f32 + (fraction * (markers.top_right.top as f32 - markers.top_left.top as f32))) as u32;
-            let x = markers.top_left.right()
-                + markers.top_left.width
-                + (top_width as f32 * fraction) as u32;
+        let bottom_right = markers.bottom_right.translate(
+            -2 * markers.bottom_right.width as i32,
+            -2 * markers.bottom_right.height as i32,
+        );
 
-            areas.push(Area{
-                top: y,
-                left: x,
-                height: markers.top_left.height,
-                width: markers.top_left.width,
-            });
-        }
+        let top_left_color = top_left.average_color(img);
+        let top_right_color = top_right.average_color(img);
+        let bottom_left_color = bottom_left.average_color(img);
+        let bottom_right_color = bottom_right.average_color(img);
 
-        Ok(Background{areas})
+        Ok(Background {
+            top_left,
+            top_left_color,
+            top_right,
+            top_right_color,
+            bottom_left,
+            bottom_left_color,
+            bottom_right,
+            bottom_right_color,
+        })
     }
 }
 
@@ -185,7 +213,7 @@ fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut Vec<XY>) {
     let pixel = img.get_pixel(xy.x, xy.y);
     let yuv = YUV::from_rgb(&pixel.to_rgb());
 
-    if yuv.Y < 0.8 || yuv.U.abs() > 0.1 || yuv.V.abs() > 0.1 {
+    if yuv.y < 0.8 || yuv.u.abs() > 0.1 || yuv.v.abs() > 0.1 {
         return;
     }
 
@@ -244,9 +272,9 @@ struct XY {
 
 #[derive(Debug)]
 struct YUV {
-    Y: f32,
-    U: f32,
-    V: f32,
+    y: f32,
+    u: f32,
+    v: f32,
 }
 
 impl YUV {
@@ -257,10 +285,17 @@ impl YUV {
         let b = channels[2] as f32 / 256.0;
         let y = 0.299 * r + 0.587 * g + 0.114 * b;
         YUV {
-            Y: y,
-            U: 0.492 * (b - y),
-            V: 0.877 * (r - y),
+            y: y,
+            u: 0.492 * (b - y),
+            v: 0.877 * (r - y),
         }
+    }
+
+    fn rgb(&self) -> [u8; 3] {
+        let r = self.y + 1.14 * self.v;
+        let g = self.y - 0.395 * self.u * 0.581 * self.v;
+        let b = self.y + 2.033 * self.u;
+        [(r * 256.0) as u8, (g * 256.0) as u8, (b * 256.0) as u8]
     }
 }
 
@@ -290,6 +325,15 @@ impl Area {
         })
     }
 
+    fn translate(&self, x: i32, y: i32) -> Area {
+        Area {
+            top: (self.top as i32 + y) as u32,
+            left: (self.left as i32 + x) as u32,
+            width: self.width,
+            height: self.height,
+        }
+    }
+
     fn right(&self) -> u32 {
         self.left + self.width
     }
@@ -310,6 +354,40 @@ impl Area {
             for y in self.top..self.bottom() {
                 img.put_pixel(x, y, Rgb(*color).to_rgba());
             }
+        }
+    }
+
+    fn average_color(&self, img: &RgbaImage) -> YUV {
+        let mut y: Option<f32> = None;
+        let mut u: Option<f32> = None;
+        let mut v: Option<f32> = None;
+
+        for px in self.left..self.right() {
+            for py in self.top..self.bottom() {
+                let pixel = img.get_pixel(px, py);
+                let yuv = YUV::from_rgb(&pixel.to_rgb());
+
+                y = match y {
+                    Some(y) => Some((y + yuv.y) / 2.0),
+                    None => Some(yuv.y),
+                };
+
+                u = match u {
+                    Some(u) => Some((u + yuv.u) / 2.0),
+                    None => Some(yuv.u),
+                };
+
+                v = match v {
+                    Some(v) => Some((v + yuv.v) / 2.0),
+                    None => Some(yuv.v),
+                };
+            }
+        }
+
+        YUV {
+            y: y.unwrap(),
+            u: u.unwrap(),
+            v: v.unwrap(),
         }
     }
 }
