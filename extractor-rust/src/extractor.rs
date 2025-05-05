@@ -10,15 +10,21 @@ const MARKER_SCAN_STEPS: u32 = 30; // If this is 30 and step is 1 then 30% will 
 
 pub fn extract(filepath: impl Into<String>) -> Result<()> {
     let filepath = filepath.into();
+
+    info!("Opening image...");
     let img = ImageReader::open(filepath)?.decode()?;
     let mut img = img.to_rgba8();
 
+    info!("Locating markers...");
     let markers = Markers::find(&img)?;
 
+    info!("Coloring markers...");
     markers.top_left.color(&mut img);
     markers.top_right.color(&mut img);
     markers.bottom_left.color(&mut img);
     markers.bottom_right.color(&mut img);
+
+    info!("Writing image...");
     img.save("empty.png")?;
 
     Ok(())
@@ -33,11 +39,48 @@ struct Markers {
 
 impl Markers {
     fn find(img: &RgbaImage) -> Result<Markers> {
+        let top_left = find_marker(img, &Corner::TopLeft)?;
+        let top_right = find_marker(img, &Corner::TopRight)?;
+        let bottom_left = find_marker(img, &Corner::BottomLeft)?;
+        let bottom_right = find_marker(img, &Corner::BottomRight)?;
+
+        if top_left.center().x > top_right.center().x {
+            return Err(anyhow!("top left must be to the left of top right"));
+        }
+
+        if top_left.center().x > bottom_right.center().x {
+            return Err(anyhow!("top left must be to the left of bottom right"));
+        }
+
+        if bottom_left.center().x > top_right.center().x {
+            return Err(anyhow!("top left must be to the left of top right"));
+        }
+
+        if bottom_left.center().x > bottom_right.center().x {
+            return Err(anyhow!("top left must be to the left of bottom right"));
+        }
+
+        if top_left.center().y > bottom_left.center().y {
+            return Err(anyhow!("top left must be above bottom left"));
+        }
+
+        if top_left.center().y > bottom_right.center().y {
+            return Err(anyhow!("top left must be above bottom right"));
+        }
+
+        if top_right.center().y > bottom_left.center().y {
+            return Err(anyhow!("top right must be above bottom left"));
+        }
+
+        if top_right.center().y > bottom_right.center().y {
+            return Err(anyhow!("top right must be above bottom right"));
+        }
+
         Ok(Markers {
-            top_left: find_marker(img, &Corner::TopLeft)?,
-            top_right: find_marker(img, &Corner::TopRight)?,
-            bottom_left: find_marker(img, &Corner::BottomLeft)?,
-            bottom_right: find_marker(img, &Corner::BottomRight)?,
+            top_left,
+            top_right,
+            bottom_left,
+            bottom_right,
         })
     }
 }
@@ -212,6 +255,13 @@ impl Area {
 
     fn bottom(&self) -> u32 {
         self.top + self.height
+    }
+
+    fn center(&self) -> XY {
+        XY {
+            x: self.left + self.width / 2,
+            y: self.top + self.height / 2,
+        }
     }
 
     fn color(&self, img: &mut RgbaImage) {
