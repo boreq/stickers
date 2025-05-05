@@ -2,7 +2,7 @@ use crate::errors::Result;
 use anyhow::anyhow;
 use image::{ImageReader, Pixel, Rgb, RgbaImage};
 use log::info;
-use std::{cmp, vec};
+use std::{cmp, collections::HashSet};
 
 const MARKER_SCAN_STEP_IN_PERCENT: i32 = 1; // [%]
 const MARKER_SCAN_STEPS: u32 = 30; // If this is 30 and step is 1 then 30% will be scanned.
@@ -200,12 +200,12 @@ fn find_marker(img: &RgbaImage, corner: &Corner) -> Result<Area> {
 }
 
 fn flood_fill(img: &RgbaImage, x: u32, y: u32) -> Option<Area> {
-    let mut pixels = vec![];
+    let mut pixels = HashSet::new();
     flood_fill_child(img, &XY { x, y }, &mut pixels);
     Area::from_pixels(pixels)
 }
 
-fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut Vec<XY>) {
+fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut HashSet<XY>) {
     if pixels.contains(xy) {
         return;
     }
@@ -217,7 +217,7 @@ fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut Vec<XY>) {
         return;
     }
 
-    pixels.push(xy.clone());
+    pixels.insert(xy.clone());
 
     if xy.x > 0 {
         flood_fill_child(
@@ -264,7 +264,7 @@ fn flood_fill_child(img: &RgbaImage, xy: &XY, pixels: &mut Vec<XY>) {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
 struct XY {
     x: u32,
     y: u32,
@@ -307,7 +307,7 @@ struct Area {
 }
 
 impl Area {
-    fn from_pixels(pixels: Vec<XY>) -> Option<Area> {
+    fn from_pixels(pixels: HashSet<XY>) -> Option<Area> {
         if pixels.is_empty() {
             return None;
         }
