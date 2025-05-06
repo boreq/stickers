@@ -9,6 +9,11 @@ const routes: Array<RouteRecordRaw> = [
     component: HomeView,
   },
   {
+    path: '/search/:query',
+    name: 'search',
+    component: HomeView,
+  },
+  {
     path: '/sticker/:filename',
     name: 'sticker',
     component: StickerView,

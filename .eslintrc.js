@@ -43,5 +43,8 @@ module.exports = {
 
     // this won't let me create funcs which accept a param to modify it
     'no-param-reassign': 'off',
+
+    // "no"
+    'prefer-destructuring': 'off',
   },
 };

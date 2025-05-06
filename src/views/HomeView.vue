@@ -6,7 +6,7 @@
           STICKERS
         </div>
       </header>
-      <input placeholder="SEARCH" />
+      <input placeholder="SEARCH" v-model="query" />
     </div>
     <StickersComponent :stickers="stickers"></StickersComponent>
   </div>
@@ -14,7 +14,7 @@
 
 <script lang="ts">
 import { defineComponent } from 'vue';
-import { stickers } from '@/domain/Stickers';
+import { stickers, Sticker } from '@/domain/Stickers';
 
 import StickersComponent from '@/components/Stickers.vue';
 
@@ -25,8 +25,39 @@ export default defineComponent({
   },
   data() {
     return {
-      stickers,
+      query: '',
     };
+  },
+  mounted(): void {
+    this.copyQueryFromLink();
+  },
+  watch: {
+    $route(): void {
+      this.copyQueryFromLink();
+    },
+    query(): void {
+      if (this.query === '') {
+        this.$router.replace({ name: 'home' });
+      } else {
+        this.$router.replace({ name: 'search', params: { query: this.query } });
+      }
+    },
+  },
+  computed: {
+    stickers(): Sticker[] {
+      if (this.query === '') {
+        return stickers;
+      }
+      return stickers.filter((v) => v.text.toLowerCase().includes(this.query.toLowerCase()));
+    },
+  },
+  methods: {
+    copyQueryFromLink(): void {
+      const query = this.$route.params.query;
+      if (query) {
+        this.query = query as string;
+      }
+    },
   },
 });
 </script>
