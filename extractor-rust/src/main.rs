@@ -22,6 +22,9 @@ const INITIAL_CROP_FACTOR: f32 = 0.05; // 5%;
 // transparent.
 const BACKGROUND_CLEANUP_FACTOR: f32 = 0.02;
 
+const BACKGROUND_SIMILARITY_FACTOR_Y:f32 = 0.22;
+const BACKGROUND_SIMILARITY_FACTOR_UV:f32 = 0.15;
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
@@ -73,7 +76,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     info!("Removing background...");
     let pixels = flood_fill(&img, markers.middle_of_top_edge(), |xy: &XY, yuv: &YUV| {
         let expected_color = background.check_color(xy);
-        expected_color.similar(yuv, 0.2, 0.1)
+        expected_color.similar(yuv, BACKGROUND_SIMILARITY_FACTOR_Y, BACKGROUND_SIMILARITY_FACTOR_UV)
     });
     for pixel in pixels {
         img.put_pixel(pixel.x(), pixel.y(), TRANSPARENT);
