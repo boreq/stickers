@@ -9,6 +9,7 @@ use std::{
 const MARKER_SCAN_STEP_IN_PERCENT: i32 = 1; // [%]
 const MARKER_SCAN_STEPS: u32 = 30; // If this is 30 and step is 1 then 30% will be scanned.
 const BACKGROUND_ANALYSIS_STEPS: usize = 10;
+const MARKER_THRESHOLD: f32 = 0.0001; // Marker must be at least 0.001% of the total image in pixel count.
 
 pub struct Markers {
     top_left: Area,
@@ -75,7 +76,7 @@ impl Markers {
         );
 
         let match_color =
-            |xy: &XY, yuv: &YUV| yuv.y > 0.8 && yuv.u.abs() < 0.1 && yuv.v.abs() < 0.1;
+            |_xy: &XY, yuv: &YUV| yuv.y > 0.8 && yuv.u.abs() < 0.1 && yuv.v.abs() < 0.1;
 
         for step_x_i in 0..MARKER_SCAN_STEPS {
             for step_y_i in 0..MARKER_SCAN_STEPS {
@@ -96,7 +97,11 @@ impl Markers {
                     return Err(anyhow!("here is a nickel kid, get yourself a bigger image"));
                 }
 
-                if let Some(area) = Area::from_pixels(flood_fill(img, XY { x, y }, match_color)) {
+                let pixels = flood_fill(img, XY { x, y }, match_color);
+                if !pixels.is_empty()
+                    && is_at_least_this_much_of_image(pixels.len(), &img, MARKER_THRESHOLD)
+                {
+                    let area = Area::from_pixels(pixels).unwrap();
                     return Ok(area);
                 }
             }
@@ -467,6 +472,10 @@ impl Area {
     pub fn height(&self) -> u32 {
         self.height
     }
+
+    pub fn area(&self) -> u32 {
+        self.width * self.height
+    }
 }
 
 struct EdgeIterator {
@@ -518,6 +527,10 @@ impl Iterator for EdgeIterator {
             },
         ))
     }
+}
+
+pub fn is_at_least_this_much_of_image(pixels: usize, img: &RgbaImage, threshold: f32) -> bool {
+    (pixels as f32) >= ((img.width() * img.height()) as f32 * threshold)
 }
 
 #[cfg(test)]
