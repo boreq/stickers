@@ -1,7 +1,6 @@
 use crate::errors::Result;
 use anyhow::anyhow;
 use image::{Pixel, Rgb, RgbaImage};
-use log::warn;
 use std::{
     cmp,
     collections::{HashMap, HashSet},
@@ -119,6 +118,22 @@ impl Markers {
             &self.bottom_left,
             &self.bottom_right,
         ]
+    }
+
+    pub fn top_left(&self) -> &Area {
+        &self.top_left
+    }
+
+    pub fn top_right(&self) -> &Area {
+        &self.top_right
+    }
+
+    pub fn bottom_left(&self) -> &Area {
+        &self.bottom_left
+    }
+
+    pub fn bottom_right(&self) -> &Area {
+        &self.bottom_right
     }
 }
 
@@ -380,15 +395,15 @@ impl Area {
         })
     }
 
-    pub fn right(&self) -> u32 {
+    fn right(&self) -> u32 {
         self.left + self.width
     }
 
-    pub fn bottom(&self) -> u32 {
+    fn bottom(&self) -> u32 {
         self.top + self.height
     }
 
-    fn center(&self) -> XY {
+    pub fn center(&self) -> XY {
         XY {
             x: self.left + self.width / 2,
             y: self.top + self.height / 2,

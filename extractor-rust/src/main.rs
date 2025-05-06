@@ -1,12 +1,15 @@
 #![feature(duration_constructors)]
 
+use std::process::Command;
+
 use env_logger::Env;
 use extractor_rust::{
     errors::Result,
     extractor::{Background, Markers, XY, YUV, flood_fill},
 };
-use image::{ImageReader, Rgba};
+use image::{GenericImageView, ImageReader, Rgba};
 use log::info;
+use tempfile::TempDir;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -48,6 +51,49 @@ fn main() -> Result<()> {
     for (area, color) in background.areas().iter() {
         area.color(&mut img, &color.rgb());
     }
+
+    info!("Correcting perspective...");
+    let tmp_dir = TempDir::new()?;
+    let magick_input = tmp_dir.path().join("stage1.png");
+    let magick_output = tmp_dir.path().join("stage2.png");
+
+    info!("Writing image...");
+    img.save(&magick_input)?;
+
+    let perspective_params = format!(
+        "{},{} {},{} {},{} {},{} {},{} {},{} {},{} {},{}",
+        markers.top_left().center().x(),
+        markers.top_left().center().y(),
+        0,
+        0,
+        markers.top_right().center().x(),
+        markers.top_right().center().y(),
+        img.width(),
+        0,
+        markers.bottom_left().center().x(),
+        markers.bottom_left().center().y(),
+        0,
+        img.height(),
+        markers.bottom_right().center().x(),
+        markers.bottom_right().center().y(),
+        img.width(),
+        img.height(),
+    );
+
+    Command::new("magick")
+        .arg(&magick_input)
+        .arg("-alpha")
+        .arg("set")
+        .arg("-virtual-pixel")
+        .arg("transparent")
+        .arg("-distort")
+        .arg("Perspective")
+        .arg(perspective_params)
+        .arg(&magick_output)
+        .output()?;
+
+    let img = ImageReader::open(magick_output)?.decode()?;
+    let img = img.to_rgba8();
 
     //background
     //    .top_left()
