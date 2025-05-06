@@ -1,6 +1,7 @@
 use crate::errors::Result;
 use anyhow::anyhow;
 use image::{Pixel, Rgb, RgbaImage};
+use log::warn;
 use std::{
     cmp,
     collections::{HashMap, HashSet},
@@ -186,7 +187,7 @@ impl Background {
         let mut distances = 0.0;
 
         for (area, color) in self.areas.iter() {
-            let distance = 1.0 / (xy.distance(&area.center()).powf(3.0));
+            let distance = 1.0 / (xy.distance(&area.center()).powi(3));
             y += distance * color.y;
             u += distance * color.u;
             v += distance * color.v;
@@ -279,9 +280,10 @@ impl XY {
     pub fn new(x: u32, y: u32) -> Self {
         XY { x, y }
     }
+
     fn distance(&self, other: &XY) -> f32 {
-        let pow1 = (self.x as f32 - other.x as f32).powf(2.0);
-        let pow2 = (self.y as f32 - other.y as f32).powf(2.0);
+        let pow1 = (self.x as f32 - other.x as f32).powi(2);
+        let pow2 = (self.y as f32 - other.y as f32).powi(2);
         (pow1 + pow2).sqrt()
     }
 
@@ -294,7 +296,7 @@ impl XY {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct YUV {
     y: f32,
     u: f32,
