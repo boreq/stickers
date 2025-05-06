@@ -12,9 +12,12 @@ use log::info;
 use tempfile::TempDir;
 
 const INITIAL_CROP_FACTOR: f32 = 0.1; // 10%;
-const BACKGROUND_CLEANUP_FACTOR: f32 = 0.05; // If a group of non-transparent pixels constitutes
+
+// If a group of non-transparent pixels constitutes
 // less than 1% of the image it will be made
 // transparent.
+const BACKGROUND_CLEANUP_FACTOR: f32 = 0.05;
+
 const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
 
 fn main() -> Result<()> {
@@ -33,20 +36,10 @@ fn main() -> Result<()> {
     info!("Analysing background...");
     let background = Background::analyse(&img, &markers)?;
 
-    //for x in background.top_left().left()..background.top_right().left() {
-    //    for y in background.top_left().top()..background.bottom_right().top() {
-    //        let expected_color = background.check_color(&XY::new(x, y));
-    //            img.put_pixel(x, y, Rgb(expected_color.rgb()).to_rgba());
-    //    }
-    //}
-
     info!("Removing background...");
     let pixels = flood_fill(&img, markers.middle_of_top_edge(), |xy: &XY, yuv: &YUV| {
         let expected_color = background.check_color(xy);
-        //println!("expected={:?} encountered={:?}", expected_color, yuv);
-        //println!("expected={:?}", expected_color);
         expected_color.similar(yuv, 0.15)
-        //yuv.y() < 0.5 && yuv.u().abs() < 0.1 && yuv.v().abs() < 0.1 }
     });
     for pixel in pixels {
         img.put_pixel(pixel.x(), pixel.y(), TRANSPARENT);
@@ -107,19 +100,6 @@ fn main() -> Result<()> {
     let img = ImageReader::open(magick_output)?.decode()?;
     let mut img = img.to_rgba8();
 
-    //background
-    //    .top_left()
-    //    .color(&mut img, &background.top_left_color().rgb());
-    //background
-    //    .top_right()
-    //    .color(&mut img, &background.top_right_color().rgb());
-    //background
-    //    .bottom_left()
-    //    .color(&mut img, &background.bottom_left_color().rgb());
-    //background
-    //    .bottom_right()
-    //    .color(&mut img, &background.bottom_right_color().rgb());
-
     info!("Writing preview image...");
     img.save("stage2.png")?;
 
@@ -176,6 +156,41 @@ fn main() -> Result<()> {
 
     info!("Writing preview image...");
     img.save("stage4.png")?;
+
+    info!("Final crop...");
+    let min_x = img
+        .enumerate_pixels()
+        .filter(|(x, y, color)| *color != &TRANSPARENT)
+        .map(|(x, y, color)| x)
+        .min()
+        .unwrap();
+
+    let max_x = img
+        .enumerate_pixels()
+        .filter(|(x, y, color)| *color != &TRANSPARENT)
+        .map(|(x, y, color)| x)
+        .max()
+        .unwrap();
+
+    let min_y = img
+        .enumerate_pixels()
+        .filter(|(x, y, color)| *color != &TRANSPARENT)
+        .map(|(x, y, color)| y)
+        .min()
+        .unwrap();
+
+    let max_y = img
+        .enumerate_pixels()
+        .filter(|(x, y, color)| *color != &TRANSPARENT)
+        .map(|(x, y, color)| y)
+        .max()
+        .unwrap();
+
+    let img = crop(&mut img, min_x, min_y, max_x - min_x, max_y - min_y);
+    let img = img.to_image();
+
+    info!("Writing preview image...");
+    img.save("stage5.png")?;
 
     Ok(())
 }
