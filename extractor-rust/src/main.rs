@@ -1,8 +1,11 @@
 #![feature(duration_constructors)]
 
 use env_logger::Env;
-use extractor_rust::{errors::Result, extractor::{flood_fill, Background, Markers, XY, YUV}};
-use image::{ImageReader, Rgba};
+use extractor_rust::{
+    errors::Result,
+    extractor::{Background, Markers, XY, YUV, flood_fill},
+};
+use image::{ImageReader, Pixel, Rgb, Rgba};
 use log::info;
 
 fn main() -> Result<()> {
@@ -17,6 +20,30 @@ fn main() -> Result<()> {
 
     info!("Analysing background...");
     let background = Background::analyse(&img, &markers)?;
+
+    //for x in background.top_left().left()..background.top_right().left() {
+    //    for y in background.top_left().top()..background.bottom_right().top() {
+    //        let expected_color = background.check_color(&XY::new(x, y));
+    //            img.put_pixel(x, y, Rgb(expected_color.rgb()).to_rgba());
+    //    }
+    //}
+
+    info!("Removing background...");
+    let pixels = flood_fill(
+        &img,
+        background.top_left().left(),
+        background.top_left().top(),
+        &|xy: &XY, yuv: &YUV| {
+            let expected_color = background.check_color(xy);
+            //println!("expected={:?} encountered={:?}", expected_color, yuv);
+            //println!("expected={:?}", expected_color);
+            expected_color.similar(yuv, 0.1)
+            //yuv.y() < 0.5 && yuv.u().abs() < 0.1 && yuv.v().abs() < 0.1 }
+        },
+    );
+    for pixel in pixels {
+        img.put_pixel(pixel.x(), pixel.y(), Rgba([0, 0, 0, 0]));
+    }
 
     info!("Coloring markers...");
     markers.top_left().color(&mut img, &[255, 0, 0]);
@@ -36,19 +63,6 @@ fn main() -> Result<()> {
     background
         .bottom_right()
         .color(&mut img, &background.bottom_right_color().rgb());
-
-    info!("Removing background...");
-    let pixels = flood_fill(
-        &img,
-        background.top_left().left(),
-        background.top_left().top(),
-        &|xy: &XY, yuv: &YUV| {
-            yuv.y() < 0.5 && yuv.u().abs() < 0.1 && yuv.v().abs() < 0.1
-        },
-    );
-    for pixel in pixels {
-        img.put_pixel(pixel.x(), pixel.y(), Rgba([0, 0, 0, 0]));
-    }
 
     info!("Writing image...");
     img.save("empty.png")?;

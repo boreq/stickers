@@ -70,9 +70,8 @@ impl Markers {
             (MARKER_SCAN_STEP_IN_PERCENT as f32 / 100.0 * img.height() as f32) as u32,
         );
 
-        let match_color = |xy: &XY, yuv: &YUV| {
-            yuv.y > 0.8 && yuv.u.abs() < 0.1 && yuv.v.abs() < 0.1
-        };
+        let match_color =
+            |xy: &XY, yuv: &YUV| yuv.y > 0.8 && yuv.u.abs() < 0.1 && yuv.v.abs() < 0.1;
 
         for step_x_i in 0..MARKER_SCAN_STEPS {
             for step_y_i in 0..MARKER_SCAN_STEPS {
@@ -172,6 +171,41 @@ impl Background {
         })
     }
 
+    pub fn check_color(&self, xy: &XY) -> YUV {
+        let distance_top_left = 1.0/ xy.distance(&self.top_left.center());
+        let distance_top_right = 1.0/xy.distance(&self.top_right.center());
+        let distance_bottom_left =1.0/ xy.distance(&self.bottom_left.center());
+        let distance_bottom_right =1.0/ xy.distance(&self.bottom_right.center());
+
+//        println!("1={:?} d={:?}", self.top_left_color, distance_top_left);
+//        println!("2={:?} d={:?}", self.top_right_color, distance_top_right);
+//        println!("3={:?} d={:?}", self.bottom_left_color, distance_bottom_left);
+//        println!("4={:?} d={:?}", self.bottom_right_color, distance_bottom_right);
+//
+        let distances =
+            distance_top_left + distance_top_right + distance_bottom_left + distance_bottom_right;
+
+        let y = (distance_top_left * self.top_left_color.y
+            + distance_top_right * self.top_right_color.y
+            + distance_bottom_left * self.bottom_left_color.y
+            + distance_bottom_right * self.bottom_right_color.y)
+            / distances;
+
+        let u = (distance_top_left * self.top_left_color.u
+            + distance_top_right * self.top_right_color.u
+            + distance_bottom_left * self.bottom_left_color.u
+            + distance_bottom_right * self.bottom_right_color.u)
+            / distances;
+
+        let v = (distance_top_left * self.top_left_color.v
+            + distance_top_right * self.top_right_color.v
+            + distance_bottom_left * self.bottom_left_color.v
+            + distance_bottom_right * self.bottom_right_color.v)
+            / distances;
+
+        YUV { y, u, v }
+    }
+
     pub fn top_left(&self) -> &Area {
         &self.top_left
     }
@@ -217,7 +251,7 @@ where
     FM: Fn(&XY, &YUV) -> bool,
 {
     let mut pixels = HashSet::new();
-    let mut queue = vec![XY{x, y}];
+    let mut queue = vec![XY { x, y }];
 
     loop {
         let Some(xy) = queue.pop() else {
@@ -238,39 +272,31 @@ where
         pixels.insert(xy.clone());
 
         if xy.x > 0 {
-            queue.push(
-                XY {
-                    x: xy.x - 1,
-                    y: xy.y,
-                },
-            );
+            queue.push(XY {
+                x: xy.x - 1,
+                y: xy.y,
+            });
         }
 
         if xy.y > 0 {
-            queue.push(
-                XY {
-                    x: xy.x,
-                    y: xy.y - 1,
-                },
-            );
+            queue.push(XY {
+                x: xy.x,
+                y: xy.y - 1,
+            });
         }
 
         if xy.x < img.width() - 1 {
-            queue.push(
-                XY {
-                    x: xy.x + 1,
-                    y: xy.y,
-                },
-            );
+            queue.push(XY {
+                x: xy.x + 1,
+                y: xy.y,
+            });
         }
 
         if xy.y < img.height() - 1 {
-            queue.push(
-                XY {
-                    x: xy.x,
-                    y: xy.y + 1,
-                },
-            );
+            queue.push(XY {
+                x: xy.x,
+                y: xy.y + 1,
+            });
         }
     }
 
@@ -284,6 +310,15 @@ pub struct XY {
 }
 
 impl XY {
+    pub fn new(x: u32, y: u32) -> Self {
+        XY{x, y}
+    }
+    fn distance(&self, other: &XY) -> f32 {
+        let pow1 = (self.x as f32 - other.x as f32).powf(2.0);
+        let pow2 = (self.y as f32 - other.y as f32).powf(2.0);
+        (pow1 + pow2).sqrt()
+    }
+
     pub fn x(&self) -> u32 {
         self.x
     }
@@ -312,6 +347,22 @@ impl YUV {
             u: 0.492 * (b - y),
             v: 0.877 * (r - y),
         }
+    }
+
+    pub fn similar(&self, other: &Self, epsilon: f32) -> bool {
+        if (self.y - other.y).abs() > epsilon * 1.0 {
+            return false;
+        }
+
+        if (self.u - other.u).abs() > epsilon * 0.436 {
+            return false;
+        }
+
+        if (self.v - other.v) > epsilon * 0.615 {
+            return false;
+        }
+
+        true
     }
 
     pub fn rgb(&self) -> [u8; 3] {
