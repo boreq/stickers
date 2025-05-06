@@ -5,7 +5,7 @@ use extractor_rust::{
     errors::Result,
     extractor::{Background, Markers, XY, YUV, flood_fill},
 };
-use image::{ImageReader, Pixel, Rgb, Rgba};
+use image::{ImageReader, Rgba};
 use log::info;
 
 fn main() -> Result<()> {
@@ -29,17 +29,13 @@ fn main() -> Result<()> {
     //}
 
     info!("Removing background...");
-    let pixels = flood_fill(
-        &img,
-        markers.middle_of_top_edge(),
-        &|xy: &XY, yuv: &YUV| {
-            let expected_color = background.check_color(xy);
-            //println!("expected={:?} encountered={:?}", expected_color, yuv);
-            //println!("expected={:?}", expected_color);
-            expected_color.similar(yuv, 0.15)
-            //yuv.y() < 0.5 && yuv.u().abs() < 0.1 && yuv.v().abs() < 0.1 }
-        },
-    );
+    let pixels = flood_fill(&img, markers.middle_of_top_edge(), |xy: &XY, yuv: &YUV| {
+        let expected_color = background.check_color(xy);
+        //println!("expected={:?} encountered={:?}", expected_color, yuv);
+        //println!("expected={:?}", expected_color);
+        expected_color.similar(yuv, 0.15)
+        //yuv.y() < 0.5 && yuv.u().abs() < 0.1 && yuv.v().abs() < 0.1 }
+    });
     for pixel in pixels {
         img.put_pixel(pixel.x(), pixel.y(), Rgba([0, 0, 0, 0]));
     }

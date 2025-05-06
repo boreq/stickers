@@ -8,7 +8,7 @@ use std::{
 
 const MARKER_SCAN_STEP_IN_PERCENT: i32 = 1; // [%]
 const MARKER_SCAN_STEPS: u32 = 30; // If this is 30 and step is 1 then 30% will be scanned.
-const BACKGROUND_ANALYSIS_STEPS: u32 = 10;
+const BACKGROUND_ANALYSIS_STEPS: usize = 10;
 
 pub struct Markers {
     top_left: Area,
@@ -96,7 +96,7 @@ impl Markers {
                     return Err(anyhow!("here is a nickel kid, get yourself a bigger image"));
                 }
 
-                if let Some(area) = Area::from_pixels(flood_fill(img, XY{x, y}, &match_color)) {
+                if let Some(area) = Area::from_pixels(flood_fill(img, XY { x, y }, match_color)) {
                     return Ok(area);
                 }
             }
@@ -108,11 +108,16 @@ impl Markers {
     pub fn middle_of_top_edge(&self) -> XY {
         let x = (self.top_left.center().x + self.top_right.center().x) / 2;
         let y = (self.top_left.center().y + self.top_right.center().y) / 2;
-        XY{x, y}
+        XY { x, y }
     }
 
-    pub fn markers<'a>(&'a self) -> Vec<&'a Area> {
-       vec![&self.top_left, &self.top_right, &self.bottom_left, &self.bottom_right]
+    pub fn markers(&self) -> Vec<&Area> {
+        vec![
+            &self.top_left,
+            &self.top_right,
+            &self.bottom_left,
+            &self.bottom_right,
+        ]
     }
 }
 
@@ -122,30 +127,53 @@ pub struct Background {
 
 impl Background {
     pub fn analyse(img: &RgbaImage, markers: &Markers) -> Result<Background> {
-        let left = cmp::max(markers.top_left.right(), markers.bottom_left.right());
-        let right = cmp::min(markers.top_right.left, markers.bottom_right.left);
-        let top = cmp::max(markers.top_left.bottom(), markers.top_right.bottom());
-        let bottom = cmp::min(markers.bottom_left.top, markers.bottom_right.top);
+        let mut areas = HashMap::new();
 
         let marker_width = markers.top_left.width;
         let marker_height = markers.top_left.height;
 
-        let step_x = (right - left) / BACKGROUND_ANALYSIS_STEPS;
-        let step_y = (bottom - top) / BACKGROUND_ANALYSIS_STEPS;
+        let iter_top = EdgeIterator::new(
+            markers.top_left.center(),
+            markers.top_right.center(),
+            BACKGROUND_ANALYSIS_STEPS,
+        )?;
 
-        let mut areas = HashMap::new();
-        for x in ((left + marker_width)..(right - marker_width)).step_by(step_x as usize) {
-            for y in ((top + marker_height)..(bottom - marker_height)).step_by(step_y as usize) {
-                let area = Area {
-                    top: y,
-                    left: x,
-                    width: marker_width,
-                    height: marker_height,
-                };
+        let iter_bottom = EdgeIterator::new(
+            markers.bottom_left.center(),
+            markers.bottom_right.center(),
+            BACKGROUND_ANALYSIS_STEPS,
+        )?;
 
-                let color = area.average_color(img);
-                areas.insert(area, color);
+        let iter_left = EdgeIterator::new(
+            markers.top_left.center(),
+            markers.bottom_left.center(),
+            BACKGROUND_ANALYSIS_STEPS,
+        )?;
+
+        let iter_right = EdgeIterator::new(
+            markers.top_right.center(),
+            markers.bottom_right.center(),
+            BACKGROUND_ANALYSIS_STEPS,
+        )?;
+
+        for (i, xy) in iter_top
+            .chain(iter_bottom)
+            .chain(iter_left)
+            .chain(iter_right)
+        {
+            if i == 0 || i == BACKGROUND_ANALYSIS_STEPS - 1 {
+                continue;
             }
+
+            let area = Area {
+                top: xy.y - marker_height / 2,
+                left: xy.x - marker_width / 2,
+                width: marker_width,
+                height: marker_height,
+            };
+
+            let color = area.average_color(img);
+            areas.insert(area, color);
         }
 
         Ok(Background { areas })
@@ -164,36 +192,6 @@ impl Background {
             v += distance * color.v;
             distances += distance;
         }
-        //let distance_top_left = 1.0/ xy.distance(&self.top_left.center());
-        //let distance_top_right = 1.0/xy.distance(&self.top_right.center());
-        //let distance_bottom_left =1.0/ xy.distance(&self.bottom_left.center());
-        //let distance_bottom_right =1.0/ xy.distance(&self.bottom_right.center());
-
-        //        println!("1={:?} d={:?}", self.top_left_color, distance_top_left);
-        //        println!("2={:?} d={:?}", self.top_right_color, distance_top_right);
-        //        println!("3={:?} d={:?}", self.bottom_left_color, distance_bottom_left);
-        //        println!("4={:?} d={:?}", self.bottom_right_color, distance_bottom_right);
-        //
-        //let distances =
-        //    distance_top_left + distance_top_right + distance_bottom_left + distance_bottom_right;
-
-        //let y = (distance_top_left * self.top_left_color.y
-        //    + distance_top_right * self.top_right_color.y
-        //    + distance_bottom_left * self.bottom_left_color.y
-        //    + distance_bottom_right * self.bottom_right_color.y)
-        //    / distances;
-
-        //let u = (distance_top_left * self.top_left_color.u
-        //    + distance_top_right * self.top_right_color.u
-        //    + distance_bottom_left * self.bottom_left_color.u
-        //    + distance_bottom_right * self.bottom_right_color.u)
-        //    / distances;
-
-        //let v = (distance_top_left * self.top_left_color.v
-        //    + distance_top_right * self.top_right_color.v
-        //    + distance_bottom_left * self.bottom_left_color.v
-        //    + distance_bottom_right * self.bottom_right_color.v)
-        //    / distances;
 
         YUV {
             y: y / distances,
@@ -201,38 +199,6 @@ impl Background {
             v: v / distances,
         }
     }
-
-    //pub fn top_left(&self) -> &Area {
-    //    &self.top_left
-    //}
-
-    //pub fn top_left_color(&self) -> &YUV {
-    //    &self.top_left_color
-    //}
-
-    //pub fn top_right(&self) -> &Area {
-    //    &self.top_right
-    //}
-
-    //pub fn top_right_color(&self) -> &YUV {
-    //    &self.top_right_color
-    //}
-
-    //pub fn bottom_left(&self) -> &Area {
-    //    &self.bottom_left
-    //}
-
-    //pub fn bottom_left_color(&self) -> &YUV {
-    //    &self.bottom_left_color
-    //}
-
-    //pub fn bottom_right(&self) -> &Area {
-    //    &self.bottom_right
-    //}
-
-    //pub fn bottom_right_color(&self) -> &YUV {
-    //    &self.bottom_right_color
-    //}
 
     pub fn areas(&self) -> &HashMap<Area, YUV> {
         &self.areas
@@ -343,7 +309,7 @@ impl YUV {
         let b = channels[2] as f32 / 256.0;
         let y = 0.299 * r + 0.587 * g + 0.114 * b;
         YUV {
-            y: y,
+            y,
             u: 0.492 * (b - y),
             v: 0.877 * (r - y),
         }
@@ -410,15 +376,6 @@ impl Area {
             width: right - left,
             height: bottom - top,
         })
-    }
-
-    fn translate(&self, x: i32, y: i32) -> Area {
-        Area {
-            top: (self.top as i32 + y) as u32,
-            left: (self.left as i32 + x) as u32,
-            width: self.width,
-            height: self.height,
-        }
     }
 
     pub fn right(&self) -> u32 {
@@ -492,6 +449,57 @@ impl Area {
 
     pub fn height(&self) -> u32 {
         self.height
+    }
+}
+
+struct EdgeIterator {
+    a: XY,
+    b: XY,
+    steps: usize,
+    next_step: usize,
+}
+
+impl EdgeIterator {
+    pub fn new(a: XY, b: XY, steps: usize) -> Result<Self> {
+        if steps < 2 {
+            return Err(anyhow!(
+                "requesting fewer than two steps seems a bit nonsensical"
+            ));
+        }
+
+        Ok(Self {
+            a,
+            b,
+            steps,
+            next_step: 0,
+        })
+    }
+}
+
+impl Iterator for EdgeIterator {
+    type Item = (usize, XY);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let current_step = self.next_step;
+        if current_step >= self.steps {
+            return None;
+        }
+
+        self.next_step += 1;
+
+        let fraction = current_step as f32 / ((self.steps - 1) as f32);
+        let length_x = self.b.x as f32 - self.a.x as f32;
+        let length_y = self.b.y as f32 - self.a.y as f32;
+        let x = self.a.x as f32 + fraction * length_x;
+        let y = self.a.y as f32 + fraction * length_y;
+
+        Some((
+            current_step,
+            XY {
+                x: x as u32,
+                y: y as u32,
+            },
+        ))
     }
 }
 
