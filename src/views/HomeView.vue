@@ -78,7 +78,7 @@ export default defineComponent({
     .header-sticker {
       margin-bottom: 1em;
       padding: 0.1em 1em;
-      font-size: 50px;
+      font-size: 100px;
       display: inline-block;
       background-color: var(--cyber-yellow);
       color: var(--blackest-black);
@@ -100,6 +100,34 @@ export default defineComponent({
 
       &:focus {
         outline: none;
+      }
+    }
+  }
+
+  @media (max-width: 1000px) {
+    header {
+      .header-sticker {
+        font-size: 75px;
+      }
+    }
+
+    .input-container {
+      input {
+        font-size: 25px;
+      }
+    }
+  }
+
+  @media (max-width: 750px) {
+    header {
+      .header-sticker {
+        font-size: 50px;
+      }
+    }
+
+    .input-container {
+      input {
+        font-size: 20px;
       }
     }
   }
