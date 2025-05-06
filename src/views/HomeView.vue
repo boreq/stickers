@@ -9,6 +9,13 @@
       <input placeholder="SEARCH" v-model="query" />
     </div>
     <StickersComponent :stickers="stickers"></StickersComponent>
+    <div class="no-stickers" v-if="stickers.length == 0">
+      <p>
+        there are no stickers that match this query
+      </p>
+      <router-link :to="{ name: 'home' }">see all stickers</router-link>
+    </div>
+    <a class="repo-link" href="https://github.com/boreq/stickers">https://github.com/boreq/stickers</a>
   </div>
 </template>
 
@@ -56,6 +63,8 @@ export default defineComponent({
       const query = this.$route.params.query;
       if (query) {
         this.query = query as string;
+      } else {
+        this.query = '';
       }
     },
   },
@@ -63,6 +72,8 @@ export default defineComponent({
 </script>
 
 <style scoped lang="scss">
+  $margin: 5em;
+
   header {
     .header-sticker {
       margin-bottom: 1em;
@@ -76,7 +87,7 @@ export default defineComponent({
   }
 
   .input-container {
-    padding: 5em 0;
+    margin: $margin 0;
 
     input {
       border: 1px solid var(--cyber-yellow);
@@ -90,6 +101,21 @@ export default defineComponent({
       &:focus {
         outline: none;
       }
+    }
+  }
+
+  .repo-link {
+    margin-top: $margin;
+    color: var(--cyber-yellow);
+    display: block;
+  }
+
+  .no-stickers {
+    color: var(--whitest-white);
+
+    a {
+      color: var(--cyber-yellow);
+
     }
   }
 </style>
