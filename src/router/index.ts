@@ -1,11 +1,17 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
 import HomeView from '../views/HomeView.vue';
+import StickerView from '../views/StickerView.vue';
 
 const routes: Array<RouteRecordRaw> = [
   {
     path: '/',
     name: 'home',
     component: HomeView,
+  },
+  {
+    path: '/sticker/:filename',
+    name: 'sticker',
+    component: StickerView,
   },
 ];
 

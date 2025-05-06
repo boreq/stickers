@@ -1,8 +1,9 @@
 <template>
   <div class="stickers">
-    <div class="sticker" v-for="sticker in stickers" :key="sticker.filename">
-      <img alt="Sticker" :src="stickerURL(sticker)">
-    </div>
+    <router-link class="sticker" v-for="sticker in stickers" :key="sticker.filename" :to="{ name:
+      'sticker', params: { filename: sticker.filename } }">
+      <StickerComponent :sticker="sticker"></StickerComponent>
+    </router-link>
   </div>
 </template>
 
@@ -10,8 +11,13 @@
 import { defineComponent, PropType } from 'vue';
 import { Sticker } from '@/domain/Stickers';
 
+import StickerComponent from '@/components/Sticker.vue';
+
 export default defineComponent({
   name: 'StickersComponent',
+  components: {
+    StickerComponent,
+  },
   props: {
     stickers: Object as PropType<Sticker[]>,
   },
@@ -30,7 +36,7 @@ export default defineComponent({
   justify-content: center;
 
   .sticker {
-    height: 100px;
+    height: 150px;
     padding: .5em;
 
     img {
