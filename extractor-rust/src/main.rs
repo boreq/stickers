@@ -1,6 +1,6 @@
 #![feature(duration_constructors)]
 
-use std::{collections::HashSet, process::Command};
+use std::{collections::HashSet, env, process::Command};
 
 use env_logger::Env;
 use extractor_rust::{
@@ -23,10 +23,8 @@ const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
 fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
-    extract("yellow_day.jpg", "yellow_day_out.png", false)?;
-    extract("black_day.jpg", "black_day_out.png", false)?;
-    extract("yellow.jpg", "yellow_out.png", false)?;
-    extract("black.jpg", "black_out.png", false)?;
+    let args: Vec<String> = env::args().collect();
+    extract(&args[1], &args[2], false)?;
 
     Ok(())
 }

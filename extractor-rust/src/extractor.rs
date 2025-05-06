@@ -99,7 +99,7 @@ impl Markers {
 
                 let pixels = flood_fill(img, XY { x, y }, match_color);
                 if !pixels.is_empty()
-                    && is_at_least_this_much_of_image(pixels.len(), &img, MARKER_THRESHOLD)
+                    && is_at_least_this_much_of_image(pixels.len(), img, MARKER_THRESHOLD)
                 {
                     let area = Area::from_pixels(pixels).unwrap();
                     return Ok(area);
