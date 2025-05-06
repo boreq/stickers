@@ -1,13 +1,12 @@
 #!/bin/bash
 set -e
 
-for filename in ./public/stickers/raw/*; do
-    source=$filename;
-    target="./public/stickers/images/$(basename ${filename%.jpg}).png";
+target_dir="public/stickers/images";
+rm -rf ./$target_dir/* # :worry:
+target_dir=$(realpath $target_dir);
 
-    source=$(realpath $source);
-    target=$(realpath $target);
+source_dir="public/stickers/raw";
+source_dir=$(realpath $source_dir);
 
-    echo "$source $target";
-    (cd extractor-rust && cargo run --release "$source" "$target");
-done
+echo "$source $target";
+(cd extractor-rust && cargo run --release "$source_dir" "$target_dir");

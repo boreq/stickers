@@ -1,6 +1,6 @@
 use crate::errors::Result;
 use anyhow::anyhow;
-use image::{Pixel, Rgb, RgbaImage};
+use image::{Pixel, Rgb, Rgba, RgbaImage};
 use std::{
     cmp,
     collections::{HashMap, HashSet},
@@ -9,7 +9,15 @@ use std::{
 const MARKER_SCAN_STEP_IN_PERCENT: i32 = 1; // [%]
 const MARKER_SCAN_STEPS: u32 = 30; // If this is 30 and step is 1 then 30% will be scanned.
 const BACKGROUND_ANALYSIS_STEPS: usize = 10;
-const MARKER_THRESHOLD: f32 = 0.0001; // Marker must be at least 0.001% of the total image in pixel count.
+
+// Marker must be at least 0.001% of the total image in pixel count.
+const MARKER_THRESHOLD: f32 = 0.0001;
+
+// Consider stickers to be in the same column if their
+// centers are this far away.
+const SNAP_STICKERS_THRESHOLD: f32 = 0.2;
+
+pub const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
 
 pub struct Markers {
     top_left: Area,
@@ -76,7 +84,7 @@ impl Markers {
         );
 
         let match_color =
-            |_xy: &XY, yuv: &YUV| yuv.y > 0.8 && yuv.u.abs() < 0.1 && yuv.v.abs() < 0.1;
+            |_xy: &XY, yuv: &YUV| yuv.y > 0.7 && yuv.u.abs() < 0.15 && yuv.v.abs() < 0.15;
 
         for step_x_i in 0..MARKER_SCAN_STEPS {
             for step_y_i in 0..MARKER_SCAN_STEPS {
@@ -207,7 +215,8 @@ impl Background {
         let mut distances = 0.0;
 
         for (area, color) in self.areas.iter() {
-            let distance = 1.0 / (xy.distance(&area.center()).powi(3));
+            // mult to bias towards closer points
+            let distance = 1.0 / (xy.distance(&area.center()).powi(2));
             y += distance * color.y;
             u += distance * color.u;
             v += distance * color.v;
@@ -337,16 +346,16 @@ impl YUV {
         }
     }
 
-    pub fn similar(&self, other: &Self, epsilon: f32) -> bool {
-        if (self.y - other.y).abs() > epsilon * 1.0 {
+    pub fn similar(&self, other: &Self, epsilon_y: f32, epsilon_uv: f32) -> bool {
+        if (self.y - other.y).abs() > epsilon_y * 1.0 {
             return false;
         }
 
-        if (self.u - other.u).abs() > epsilon * 0.436 {
+        if (self.u - other.u).abs() > epsilon_uv * 0.436 {
             return false;
         }
 
-        if (self.v - other.v) > epsilon * 0.615 {
+        if (self.v - other.v) > epsilon_uv * 0.615 {
             return false;
         }
 
@@ -373,7 +382,7 @@ impl YUV {
     }
 }
 
-#[derive(Debug, Hash, Eq, PartialEq)]
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub struct Area {
     top: u32,
     left: u32,
@@ -413,6 +422,10 @@ impl Area {
             x: self.left + self.width / 2,
             y: self.top + self.height / 2,
         }
+    }
+
+    pub fn contains(&self, xy: &XY) -> bool {
+        xy.x >= self.left && xy.x <= self.right() && xy.y >= self.top && xy.y <= self.bottom()
     }
 
     pub fn color(&self, img: &mut RgbaImage, color: &[u8; 3]) {
@@ -526,6 +539,113 @@ impl Iterator for EdgeIterator {
                 y: y as u32,
             },
         ))
+    }
+}
+
+pub struct IdentifiedSticker {
+    pub area: Area,
+    pub column: usize,
+    pub row: usize,
+}
+
+pub struct IdentifiedStickers {
+    stickers: Vec<IdentifiedSticker>,
+}
+
+impl IdentifiedStickers {
+    pub fn new(img: &RgbaImage) -> Self {
+        let mut areas: Vec<Area> = vec![];
+
+        for ix in 0..img.width() {
+            for iy in 0..img.height() {
+                let xy = XY::new(ix, iy);
+
+                let area_with_this_pixel_exists = areas.iter().any(|v| v.contains(&xy));
+                if area_with_this_pixel_exists {
+                    continue;
+                }
+
+                let color = img.get_pixel(xy.x(), xy.y());
+                if color.to_rgba() == TRANSPARENT {
+                    continue;
+                }
+
+                let pixels = flood_fill(img, xy, |xy: &XY, _yuv: &YUV| {
+                    let color = img.get_pixel(xy.x(), xy.y());
+                    color.to_rgba() != TRANSPARENT
+                });
+
+                let area = Area::from_pixels(pixels).unwrap();
+                areas.push(area);
+            }
+        }
+
+        areas.sort_by_key(|a| a.left());
+
+        let snap_distance = img.width() as f32 * SNAP_STICKERS_THRESHOLD;
+
+        let mut stickers_assigned_to_columns = vec![];
+        for area in &areas {
+            if stickers_assigned_to_columns.is_empty() {
+                stickers_assigned_to_columns.push((area.clone(), 0));
+            } else {
+                let existing_column = stickers_assigned_to_columns
+                    .iter()
+                    .find(|v| {
+                        (v.0.center().x as f32 - area.center().x as f32).abs() < snap_distance
+                    })
+                    .map(|v| v.1);
+                match existing_column {
+                    Some(column) => {
+                        stickers_assigned_to_columns.push((area.clone(), column));
+                    }
+                    None => {
+                        let highest_column = stickers_assigned_to_columns
+                            .iter()
+                            .map(|v| v.1)
+                            .max()
+                            .unwrap();
+                        stickers_assigned_to_columns.push((area.clone(), highest_column + 1));
+                    }
+                }
+            }
+        }
+
+        stickers_assigned_to_columns.sort_by(|a, b| match a.1.cmp(&b.1) {
+            cmp::Ordering::Less => cmp::Ordering::Less,
+            cmp::Ordering::Equal => a.0.top().partial_cmp(&b.0.top()).unwrap(),
+            cmp::Ordering::Greater => cmp::Ordering::Greater,
+        });
+
+        let mut stickers: Vec<IdentifiedSticker> = vec![];
+        let mut current_row = 0;
+        for (area, column) in stickers_assigned_to_columns {
+            match stickers.last() {
+                Some(last) => {
+                    if last.column != column {
+                        current_row = 0;
+                    } else {
+                        current_row += 1;
+                    }
+                    stickers.push(IdentifiedSticker {
+                        area,
+                        column,
+                        row: current_row,
+                    });
+                }
+                None => stickers.push(IdentifiedSticker {
+                    area,
+                    column,
+                    row: 0,
+                }),
+            }
+        }
+
+        Self { stickers }
+    }
+
+    pub fn stickers(&self) -> &[IdentifiedSticker] {
+        &self.stickers
     }
 }
 

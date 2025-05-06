@@ -1,35 +1,49 @@
 #![feature(duration_constructors)]
 
-use std::{collections::HashSet, env, process::Command};
+use std::{collections::HashSet, env, fs, path::Path, process::Command};
 
 use env_logger::Env;
 use extractor_rust::{
     errors::Result,
-    extractor::{Background, Markers, XY, YUV, flood_fill, is_at_least_this_much_of_image},
+    extractor::{
+        Background, IdentifiedStickers, Markers, TRANSPARENT, XY, YUV, flood_fill,
+        is_at_least_this_much_of_image,
+    },
 };
-use image::{ImageReader, Pixel, Rgba, imageops::crop};
+use image::{ImageReader, Pixel, imageops::crop};
 use log::info;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use tempfile::TempDir;
 
-const INITIAL_CROP_FACTOR: f32 = 0.1; // 10%;
+const INITIAL_CROP_FACTOR: f32 = 0.05; // 5%;
 
 // If a group of non-transparent pixels constitutes
-// less than 1% of the image it will be made
+// less than 2% of the image it will be made
 // transparent.
-const BACKGROUND_CLEANUP_FACTOR: f32 = 0.05;
-
-const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
+const BACKGROUND_CLEANUP_FACTOR: f32 = 0.02;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
     let args: Vec<String> = env::args().collect();
-    extract(&args[1], &args[2], false)?;
+
+    let readdir = fs::read_dir(&args[1])?;
+    let mut paths: Vec<String> = vec![];
+    for v in readdir {
+        paths.push(v?.path().to_string_lossy().to_string());
+    }
+
+    paths.par_iter().for_each(|input_path| {
+        extract(input_path, &args[2], false).unwrap();
+    });
 
     Ok(())
 }
 
-fn extract(input_path: &str, output_path: &str, save_intermediate_images: bool) -> Result<()> {
+fn extract(input_path: &str, output_directory: &str, save_intermediate_images: bool) -> Result<()> {
+    let path = Path::new(input_path);
+    let file_stem = path.file_stem().unwrap();
+
     info!("Opening image {}...", input_path);
 
     let img = ImageReader::open(input_path)?.decode()?;
@@ -37,7 +51,7 @@ fn extract(input_path: &str, output_path: &str, save_intermediate_images: bool) 
 
     if save_intermediate_images {
         info!("Writing preview image...");
-        img.save("stage0.png")?;
+        img.save(format!("{}_stage0.png", file_stem.to_str().unwrap()))?;
     }
 
     info!("Locating markers...");
@@ -50,7 +64,7 @@ fn extract(input_path: &str, output_path: &str, save_intermediate_images: bool) 
 
     if save_intermediate_images {
         info!("Writing preview image...");
-        img.save("stage1.png")?;
+        img.save(format!("{}_stage1.png", file_stem.to_str().unwrap()))?;
     }
 
     info!("Analysing background...");
@@ -59,7 +73,7 @@ fn extract(input_path: &str, output_path: &str, save_intermediate_images: bool) 
     info!("Removing background...");
     let pixels = flood_fill(&img, markers.middle_of_top_edge(), |xy: &XY, yuv: &YUV| {
         let expected_color = background.check_color(xy);
-        expected_color.similar(yuv, 0.15)
+        expected_color.similar(yuv, 0.2, 0.1)
     });
     for pixel in pixels {
         img.put_pixel(pixel.x(), pixel.y(), TRANSPARENT);
@@ -81,7 +95,7 @@ fn extract(input_path: &str, output_path: &str, save_intermediate_images: bool) 
 
     if save_intermediate_images {
         info!("Writing preview image...");
-        img.save("stage2.png")?;
+        img.save(format!("{}_stage2.png", file_stem.to_str().unwrap()))?;
     }
 
     info!("Writing image...");
@@ -124,7 +138,7 @@ fn extract(input_path: &str, output_path: &str, save_intermediate_images: bool) 
 
     if save_intermediate_images {
         info!("Writing preview image...");
-        img.save("stage3.png")?;
+        img.save(format!("{}_stage3.png", file_stem.to_str().unwrap()))?;
     }
 
     info!("Cropping...");
@@ -142,7 +156,7 @@ fn extract(input_path: &str, output_path: &str, save_intermediate_images: bool) 
 
     if save_intermediate_images {
         info!("Writing preview image...");
-        img.save("stage4.png")?;
+        img.save(format!("{}_stage4.png", file_stem.to_str().unwrap()))?;
     }
 
     info!("Cleaning up background...");
@@ -180,48 +194,31 @@ fn extract(input_path: &str, output_path: &str, save_intermediate_images: bool) 
 
     if save_intermediate_images {
         info!("Writing preview image...");
-        img.save("stage5.png")?;
+        img.save(format!("{}_stage5.png", file_stem.to_str().unwrap()))?;
     }
 
     info!("Final crop...");
-    let min_x = img
-        .enumerate_pixels()
-        .filter(|(_x, _y, color)| *color != &TRANSPARENT)
-        .map(|(x, _y, _color)| x)
-        .min()
-        .unwrap();
+    let stickers = IdentifiedStickers::new(&img);
+    for sticker in stickers.stickers() {
+        let img = crop(
+            &mut img,
+            sticker.area.left(),
+            sticker.area.top(),
+            sticker.area.width(),
+            sticker.area.height(),
+        );
+        let img = img.to_image();
 
-    let max_x = img
-        .enumerate_pixels()
-        .filter(|(_x, _y, color)| *color != &TRANSPARENT)
-        .map(|(x, _y, _color)| x)
-        .max()
-        .unwrap();
+        let output_path = Path::new(output_directory).join(format!(
+            "{}_{}_{}.png",
+            file_stem.to_str().unwrap(),
+            sticker.column,
+            sticker.row
+        ));
 
-    let min_y = img
-        .enumerate_pixels()
-        .filter(|(_x, _y, color)| *color != &TRANSPARENT)
-        .map(|(_x, y, _color)| y)
-        .min()
-        .unwrap();
-
-    let max_y = img
-        .enumerate_pixels()
-        .filter(|(_x, _y, color)| *color != &TRANSPARENT)
-        .map(|(_x, y, _color)| y)
-        .max()
-        .unwrap();
-
-    let img = crop(&mut img, min_x, min_y, max_x - min_x, max_y - min_y);
-    let img = img.to_image();
-
-    if save_intermediate_images {
-        info!("Writing preview image...");
-        img.save("stage6.png")?;
+        info!("Writing final image...");
+        img.save(output_path)?;
     }
-
-    info!("Writing final image...");
-    img.save(output_path)?;
 
     Ok(())
 }

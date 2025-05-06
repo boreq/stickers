@@ -1,7 +1,7 @@
-MAIN_BINARY_NAME=vivarium_assistant
+MAIN_BINARY_NAME=extractor-rust
 
 .PHONY: ci
-ci: test-verbose clippy build-release fix fmt check-repository-unchanged
+ci: test-verbose clippy build-release fix fmt
 
 .PHONY: cleanup
 cleanup: fix clippy fmt
@@ -31,12 +31,3 @@ fix:
 .PHONY: build-release
 build-release:
 	cargo build --bin $(MAIN_BINARY_NAME) --release
-
-.PHONY: run
-run:
-	RUST_LOG=debug cargo run --bin $(MAIN_BINARY_NAME) example_config.toml
-
-.PHONY: check-repository-unchanged
-check-repository-unchanged:
-	./tools/check_repository_unchanged.sh
-
