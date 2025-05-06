@@ -186,7 +186,7 @@ impl Background {
         let mut distances = 0.0;
 
         for (area, color) in self.areas.iter() {
-            let distance = 1.0 / xy.distance(&area.center());
+            let distance = 1.0 / (xy.distance(&area.center()).powf(3.0));
             y += distance * color.y;
             u += distance * color.u;
             v += distance * color.v;
