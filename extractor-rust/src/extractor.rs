@@ -1,10 +1,14 @@
 use crate::errors::Result;
 use anyhow::anyhow;
 use image::{Pixel, Rgb, RgbaImage};
-use std::{cmp, collections::HashSet};
+use std::{
+    cmp,
+    collections::{HashMap, HashSet},
+};
 
 const MARKER_SCAN_STEP_IN_PERCENT: i32 = 1; // [%]
 const MARKER_SCAN_STEPS: u32 = 30; // If this is 30 and step is 1 then 30% will be scanned.
+const BACKGROUND_ANALYSIS_STEPS: u32 = 10;
 
 pub struct Markers {
     top_left: Area,
@@ -119,123 +123,125 @@ impl Markers {
 }
 
 pub struct Background {
-    top_left: Area,
-    top_left_color: YUV,
-
-    top_right: Area,
-    top_right_color: YUV,
-
-    bottom_left: Area,
-    bottom_left_color: YUV,
-
-    bottom_right: Area,
-    bottom_right_color: YUV,
+    areas: HashMap<Area, YUV>,
 }
 
 impl Background {
     pub fn analyse(img: &RgbaImage, markers: &Markers) -> Result<Background> {
-        let top_left = markers.top_left.translate(
-            2 * markers.top_left.width as i32,
-            2 * markers.top_left.height as i32,
-        );
+        let left = cmp::max(markers.top_left.right(), markers.bottom_left.right());
+        let right = cmp::min(markers.top_right.left, markers.bottom_right.left);
+        let top = cmp::max(markers.top_left.bottom(), markers.top_right().bottom());
+        let bottom = cmp::min(markers.bottom_left.top, markers.bottom_right.top);
 
-        let top_right = markers.top_right.translate(
-            -2 * markers.top_right.width as i32,
-            2 * markers.top_right.height as i32,
-        );
+        let marker_width = markers.top_left.width;
+        let marker_height = markers.top_left.height;
 
-        let bottom_left = markers.bottom_left.translate(
-            2 * markers.bottom_left.width as i32,
-            -2 * markers.bottom_left.height as i32,
-        );
+        let step_x = (right - left) / BACKGROUND_ANALYSIS_STEPS;
+        let step_y = (bottom - top) / BACKGROUND_ANALYSIS_STEPS;
 
-        let bottom_right = markers.bottom_right.translate(
-            -2 * markers.bottom_right.width as i32,
-            -2 * markers.bottom_right.height as i32,
-        );
+        let mut areas = HashMap::new();
+        for x in ((left + marker_width)..(right - marker_width)).step_by(step_x as usize) {
+            for y in ((top + marker_height)..(bottom - marker_height)).step_by(step_y as usize) {
+                let area = Area {
+                    top: y,
+                    left: x,
+                    width: marker_width,
+                    height: marker_height,
+                };
 
-        let top_left_color = top_left.average_color(img);
-        let top_right_color = top_right.average_color(img);
-        let bottom_left_color = bottom_left.average_color(img);
-        let bottom_right_color = bottom_right.average_color(img);
+                let color = area.average_color(img);
+                areas.insert(area, color);
+            }
+        }
 
-        Ok(Background {
-            top_left,
-            top_left_color,
-            top_right,
-            top_right_color,
-            bottom_left,
-            bottom_left_color,
-            bottom_right,
-            bottom_right_color,
-        })
+        Ok(Background { areas })
     }
 
     pub fn check_color(&self, xy: &XY) -> YUV {
-        let distance_top_left = 1.0/ xy.distance(&self.top_left.center());
-        let distance_top_right = 1.0/xy.distance(&self.top_right.center());
-        let distance_bottom_left =1.0/ xy.distance(&self.bottom_left.center());
-        let distance_bottom_right =1.0/ xy.distance(&self.bottom_right.center());
+        let mut y = 0.0;
+        let mut u = 0.0;
+        let mut v = 0.0;
+        let mut distances = 0.0;
 
-//        println!("1={:?} d={:?}", self.top_left_color, distance_top_left);
-//        println!("2={:?} d={:?}", self.top_right_color, distance_top_right);
-//        println!("3={:?} d={:?}", self.bottom_left_color, distance_bottom_left);
-//        println!("4={:?} d={:?}", self.bottom_right_color, distance_bottom_right);
-//
-        let distances =
-            distance_top_left + distance_top_right + distance_bottom_left + distance_bottom_right;
+        for (area, color) in self.areas.iter() {
+            let distance = 1.0 / xy.distance(&area.center());
+            y += distance * color.y;
+            u += distance * color.u;
+            v += distance * color.v;
+            distances += distance;
+        }
+        //let distance_top_left = 1.0/ xy.distance(&self.top_left.center());
+        //let distance_top_right = 1.0/xy.distance(&self.top_right.center());
+        //let distance_bottom_left =1.0/ xy.distance(&self.bottom_left.center());
+        //let distance_bottom_right =1.0/ xy.distance(&self.bottom_right.center());
 
-        let y = (distance_top_left * self.top_left_color.y
-            + distance_top_right * self.top_right_color.y
-            + distance_bottom_left * self.bottom_left_color.y
-            + distance_bottom_right * self.bottom_right_color.y)
-            / distances;
+        //        println!("1={:?} d={:?}", self.top_left_color, distance_top_left);
+        //        println!("2={:?} d={:?}", self.top_right_color, distance_top_right);
+        //        println!("3={:?} d={:?}", self.bottom_left_color, distance_bottom_left);
+        //        println!("4={:?} d={:?}", self.bottom_right_color, distance_bottom_right);
+        //
+        //let distances =
+        //    distance_top_left + distance_top_right + distance_bottom_left + distance_bottom_right;
 
-        let u = (distance_top_left * self.top_left_color.u
-            + distance_top_right * self.top_right_color.u
-            + distance_bottom_left * self.bottom_left_color.u
-            + distance_bottom_right * self.bottom_right_color.u)
-            / distances;
+        //let y = (distance_top_left * self.top_left_color.y
+        //    + distance_top_right * self.top_right_color.y
+        //    + distance_bottom_left * self.bottom_left_color.y
+        //    + distance_bottom_right * self.bottom_right_color.y)
+        //    / distances;
 
-        let v = (distance_top_left * self.top_left_color.v
-            + distance_top_right * self.top_right_color.v
-            + distance_bottom_left * self.bottom_left_color.v
-            + distance_bottom_right * self.bottom_right_color.v)
-            / distances;
+        //let u = (distance_top_left * self.top_left_color.u
+        //    + distance_top_right * self.top_right_color.u
+        //    + distance_bottom_left * self.bottom_left_color.u
+        //    + distance_bottom_right * self.bottom_right_color.u)
+        //    / distances;
 
-        YUV { y, u, v }
+        //let v = (distance_top_left * self.top_left_color.v
+        //    + distance_top_right * self.top_right_color.v
+        //    + distance_bottom_left * self.bottom_left_color.v
+        //    + distance_bottom_right * self.bottom_right_color.v)
+        //    / distances;
+
+        YUV {
+            y: y / distances,
+            u: u / distances,
+            v: v / distances,
+        }
     }
 
-    pub fn top_left(&self) -> &Area {
-        &self.top_left
-    }
+    //pub fn top_left(&self) -> &Area {
+    //    &self.top_left
+    //}
 
-    pub fn top_left_color(&self) -> &YUV {
-        &self.top_left_color
-    }
+    //pub fn top_left_color(&self) -> &YUV {
+    //    &self.top_left_color
+    //}
 
-    pub fn top_right(&self) -> &Area {
-        &self.top_right
-    }
+    //pub fn top_right(&self) -> &Area {
+    //    &self.top_right
+    //}
 
-    pub fn top_right_color(&self) -> &YUV {
-        &self.top_right_color
-    }
+    //pub fn top_right_color(&self) -> &YUV {
+    //    &self.top_right_color
+    //}
 
-    pub fn bottom_left(&self) -> &Area {
-        &self.bottom_left
-    }
+    //pub fn bottom_left(&self) -> &Area {
+    //    &self.bottom_left
+    //}
 
-    pub fn bottom_left_color(&self) -> &YUV {
-        &self.bottom_left_color
-    }
+    //pub fn bottom_left_color(&self) -> &YUV {
+    //    &self.bottom_left_color
+    //}
 
-    pub fn bottom_right(&self) -> &Area {
-        &self.bottom_right
-    }
+    //pub fn bottom_right(&self) -> &Area {
+    //    &self.bottom_right
+    //}
 
-    pub fn bottom_right_color(&self) -> &YUV {
-        &self.bottom_right_color
+    //pub fn bottom_right_color(&self) -> &YUV {
+    //    &self.bottom_right_color
+    //}
+
+    pub fn areas(&self) -> &HashMap<Area, YUV> {
+        &self.areas
     }
 }
 
@@ -311,7 +317,7 @@ pub struct XY {
 
 impl XY {
     pub fn new(x: u32, y: u32) -> Self {
-        XY{x, y}
+        XY { x, y }
     }
     fn distance(&self, other: &XY) -> f32 {
         let pow1 = (self.x as f32 - other.x as f32).powf(2.0);
@@ -385,6 +391,7 @@ impl YUV {
     }
 }
 
+#[derive(Debug, Hash, Eq, PartialEq)]
 pub struct Area {
     top: u32,
     left: u32,
@@ -420,11 +427,11 @@ impl Area {
         }
     }
 
-    fn right(&self) -> u32 {
+    pub fn right(&self) -> u32 {
         self.left + self.width
     }
 
-    fn bottom(&self) -> u32 {
+    pub fn bottom(&self) -> u32 {
         self.top + self.height
     }
 

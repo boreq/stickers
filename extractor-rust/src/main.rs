@@ -31,13 +31,13 @@ fn main() -> Result<()> {
     info!("Removing background...");
     let pixels = flood_fill(
         &img,
-        background.top_left().left(),
-        background.top_left().top(),
+        markers.top_left().right() + 10,
+        markers.top_left().bottom() + 10,
         &|xy: &XY, yuv: &YUV| {
             let expected_color = background.check_color(xy);
             //println!("expected={:?} encountered={:?}", expected_color, yuv);
             //println!("expected={:?}", expected_color);
-            expected_color.similar(yuv, 0.1)
+            expected_color.similar(yuv, 0.15)
             //yuv.y() < 0.5 && yuv.u().abs() < 0.1 && yuv.v().abs() < 0.1 }
         },
     );
@@ -51,18 +51,22 @@ fn main() -> Result<()> {
     markers.bottom_left().color(&mut img, &[255, 0, 0]);
     markers.bottom_right().color(&mut img, &[255, 0, 0]);
 
-    background
-        .top_left()
-        .color(&mut img, &background.top_left_color().rgb());
-    background
-        .top_right()
-        .color(&mut img, &background.top_right_color().rgb());
-    background
-        .bottom_left()
-        .color(&mut img, &background.bottom_left_color().rgb());
-    background
-        .bottom_right()
-        .color(&mut img, &background.bottom_right_color().rgb());
+    for (area, color) in background.areas().iter() {
+        area.color(&mut img, &color.rgb());
+    }
+
+    //background
+    //    .top_left()
+    //    .color(&mut img, &background.top_left_color().rgb());
+    //background
+    //    .top_right()
+    //    .color(&mut img, &background.top_right_color().rgb());
+    //background
+    //    .bottom_left()
+    //    .color(&mut img, &background.bottom_left_color().rgb());
+    //background
+    //    .bottom_right()
+    //    .color(&mut img, &background.bottom_right_color().rgb());
 
     info!("Writing image...");
     img.save("empty.png")?;
