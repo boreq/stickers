@@ -12,7 +12,7 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
     info!("Opening image...");
-    let img = ImageReader::open("sticker_yellow.jpg")?.decode()?;
+    let img = ImageReader::open("yellow.jpg")?.decode()?;
     let mut img = img.to_rgba8();
 
     info!("Locating markers...");
@@ -31,8 +31,7 @@ fn main() -> Result<()> {
     info!("Removing background...");
     let pixels = flood_fill(
         &img,
-        markers.top_left().right() + 10,
-        markers.top_left().bottom() + 10,
+        markers.middle_of_top_edge(),
         &|xy: &XY, yuv: &YUV| {
             let expected_color = background.check_color(xy);
             //println!("expected={:?} encountered={:?}", expected_color, yuv);
@@ -46,10 +45,9 @@ fn main() -> Result<()> {
     }
 
     info!("Coloring markers...");
-    markers.top_left().color(&mut img, &[255, 0, 0]);
-    markers.top_right().color(&mut img, &[255, 0, 0]);
-    markers.bottom_left().color(&mut img, &[255, 0, 0]);
-    markers.bottom_right().color(&mut img, &[255, 0, 0]);
+    for marker in markers.markers() {
+        marker.color(&mut img, &[255, 0, 0]);
+    }
 
     for (area, color) in background.areas().iter() {
         area.color(&mut img, &color.rgb());

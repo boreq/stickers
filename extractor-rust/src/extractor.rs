@@ -96,7 +96,7 @@ impl Markers {
                     return Err(anyhow!("here is a nickel kid, get yourself a bigger image"));
                 }
 
-                if let Some(area) = Area::from_pixels(flood_fill(img, x, y, &match_color)) {
+                if let Some(area) = Area::from_pixels(flood_fill(img, XY{x, y}, &match_color)) {
                     return Ok(area);
                 }
             }
@@ -105,20 +105,14 @@ impl Markers {
         Err(anyhow!("not found"))
     }
 
-    pub fn top_left(&self) -> &Area {
-        &self.top_left
+    pub fn middle_of_top_edge(&self) -> XY {
+        let x = (self.top_left.center().x + self.top_right.center().x) / 2;
+        let y = (self.top_left.center().y + self.top_right.center().y) / 2;
+        XY{x, y}
     }
 
-    pub fn top_right(&self) -> &Area {
-        &self.top_right
-    }
-
-    pub fn bottom_left(&self) -> &Area {
-        &self.bottom_left
-    }
-
-    pub fn bottom_right(&self) -> &Area {
-        &self.bottom_right
+    pub fn markers<'a>(&'a self) -> Vec<&'a Area> {
+       vec![&self.top_left, &self.top_right, &self.bottom_left, &self.bottom_right]
     }
 }
 
@@ -130,7 +124,7 @@ impl Background {
     pub fn analyse(img: &RgbaImage, markers: &Markers) -> Result<Background> {
         let left = cmp::max(markers.top_left.right(), markers.bottom_left.right());
         let right = cmp::min(markers.top_right.left, markers.bottom_right.left);
-        let top = cmp::max(markers.top_left.bottom(), markers.top_right().bottom());
+        let top = cmp::max(markers.top_left.bottom(), markers.top_right.bottom());
         let bottom = cmp::min(markers.bottom_left.top, markers.bottom_right.top);
 
         let marker_width = markers.top_left.width;
@@ -252,12 +246,12 @@ enum Corner {
     BottomRight,
 }
 
-pub fn flood_fill<FM>(img: &RgbaImage, x: u32, y: u32, match_color: FM) -> HashSet<XY>
+pub fn flood_fill<FM>(img: &RgbaImage, xy: XY, match_color: FM) -> HashSet<XY>
 where
     FM: Fn(&XY, &YUV) -> bool,
 {
     let mut pixels = HashSet::new();
-    let mut queue = vec![XY { x, y }];
+    let mut queue = vec![xy];
 
     loop {
         let Some(xy) = queue.pop() else {
