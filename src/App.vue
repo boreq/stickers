@@ -16,5 +16,6 @@ html, body {
 :root {
   --cyber-yellow: #ffff00;
   --blackest-black: #000000;
+  --whitest-white: #ffffff;
 }
 </style>

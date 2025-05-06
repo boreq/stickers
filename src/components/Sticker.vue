@@ -1,5 +1,5 @@
 <template>
-  <img class="sticker" alt="Sticker" :src="stickerURL(sticker)">
+  <img class="sticker" :alt="alt" :title="alt" :src="stickerURL(sticker)">
 </template>
 
 <script lang="ts">
@@ -10,6 +10,14 @@ export default defineComponent({
   name: 'StickerComponent',
   props: {
     sticker: Object as PropType<Sticker>,
+  },
+  computed: {
+    alt(): string {
+      if (this.sticker?.text) {
+        return `A sticker. The text which can be deciphered states: "${this.sticker.text}".`;
+      }
+      return 'A sticker. There is no text which can be deciphered (or there is but it hasn\'t been added here).';
+    },
   },
   methods: {
     stickerURL(sticker: Sticker): string {
