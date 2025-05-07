@@ -391,6 +391,61 @@ pub struct Area {
 }
 
 impl Area {
+    fn new(top: u32, left: u32, width: u32, height: u32, img: &RgbaImage) -> Result<Self> {
+        if width == 0 || height == 0 {
+            return Err(anyhow!("width and height must be positive"));
+        }
+
+        let area = Area{
+            top, left, width, height
+        };
+
+        let max_x = img.width() - 1;
+        let max_y = img.height() - 1;
+
+        if area.left() > max_x || area.right() > max_x {
+            return Err(anyhow!("left or right is out of bounds"));
+        }
+
+        if area.bottom() > max_y || area.top() > max_y {
+            return Err(anyhow!("top or bottom is out of bounds"));
+        }
+
+        Ok(area)
+    }
+
+    fn new_around(xy: XY, size: u32, img: &RgbaImage) -> Result<Self> {
+        if size == 0 {
+            return Err(anyhow!("size can't be zero"))
+        }
+
+        let max_x = img.width() - 1;
+        let max_y = img.height() - 1;
+
+        let mut left = xy.x - size / 2;
+        let mut top = xy.y - size / 2;
+        let mut width = size;
+        let mut height = size;
+
+        if left < 0 {
+            left = 0;
+        }
+
+        if top < 0 {
+            top = 0;
+        }
+
+        if left + width > max_x {
+            width = max_x - left;
+        }
+
+        if top + height > max_y {
+            height = max_y - top;
+        }
+
+        Self::new(top, left, width, height, img)
+    }
+
     fn from_pixels(pixels: HashSet<XY>) -> Option<Area> {
         if pixels.is_empty() {
             return None;
@@ -646,6 +701,66 @@ impl IdentifiedStickers {
 
     pub fn stickers(&self) -> &[IdentifiedSticker] {
         &self.stickers
+    }
+}
+
+pub struct Gradient {
+    averaged_area_size: u32,
+    gradient: Vec<Vec<YUV>>,
+}
+
+impl Gradient {
+    pub fn new(img: &RgbaImage, averaged_area_size: u32) -> Result<Self> {
+        if averaged_area_size == 0 {
+            return Err(anyhow!("averaged area size can't be zero"));
+        }
+
+        let mut average_colors = vec![];
+        for x in (0..img.width()).step_by(averaged_area_size as usize) {
+            average_colors.push(vec![]);
+
+            for y in (0..img.height()).step_by(averaged_area_size as usize) {
+                let xy = XY::new(x, y);
+                let area = Area::new_around(xy, averaged_area_size, img)?;
+                let average_color = area.average_color(img);
+
+                average_colors[x as usize].push(average_color);
+            }
+        }
+
+        let mut gradient = vec![];
+        for xi in 0..average_colors.len() {
+            gradient.push(vec![]);
+
+            for yi in 0..average_colors[x as usize].len() {
+                let xi = xi as usize;
+                let yi = yi as usize;
+
+                if xi == 0 || yi == 0 {
+                    gradient[xi].push(YUV{y: 0.0, u: 0.0, v: 0.0});
+                } else {
+                    let color_up = gradient[xi-1][yi]
+                    let color_left = gradient[xi][yi-1]
+                    let color = gradient[xi][yi-1]
+
+                    let diff_y = f32::max((color_up.y() - color.y()).abs(),(color_left.y() - color.y()).abs());
+                    let diff_u = f32::max((color_up.u() - color.u()).abs(),(color_left.u() - color.u()).abs());
+                    let diff_v = f32::max((color_up.v() - color.v()).abs(),(color_left.v() - color.v()).abs());
+
+                    gradient[xi].push(YUV{y: diff_y, u: diff_u, v: diff_v});
+                }
+            }
+        }
+        Ok(Self {
+            averaged_area_size,
+            gradient,
+        })
+    }
+
+    pub fn get_gradient(&self, xy: XY) -> YUV {
+        let xi = xy.x() / self.averaged_area_size;
+        let yi = xy.y() / self.averaged_area_size;
+
     }
 }
 
