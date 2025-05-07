@@ -81,8 +81,6 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     let img = ImageReader::open(input_path)?.decode()?;
     let mut img = img.to_rgba8();
 
-    preview.save(&img)?;
-
     info!("Locating markers...");
     let markers = Markers::find(&img)?;
 
@@ -114,12 +112,12 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
         area.color(&mut img, &color.rgb());
     }
 
+    preview.save(&img)?;
+
     info!("Correcting perspective...");
     let tmp_dir = TempDir::new()?;
     let magick_input = tmp_dir.path().join("input.png");
     let magick_output = tmp_dir.path().join("output.png");
-
-    preview.save(&img)?;
 
     info!("Writing image...");
     img.save(&magick_input)?;
