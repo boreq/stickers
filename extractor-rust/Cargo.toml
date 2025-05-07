@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = { version = "1.0.98", features = ["backtrace"] }
+clap = "4.5.37"
 env_logger = "0.11.8"
 image = "0.25.6"
 log = "0.4.27"

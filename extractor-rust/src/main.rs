@@ -1,7 +1,6 @@
 #![feature(duration_constructors)]
 
-use std::{collections::HashSet, env, fs, path::Path, process::Command};
-
+use anyhow::Context;
 use env_logger::Env;
 use extractor_rust::{
     errors::Result,
@@ -13,6 +12,7 @@ use extractor_rust::{
 use image::{ImageReader, Pixel, imageops::crop};
 use log::info;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use std::{collections::HashSet, fs, path::Path, process::Command};
 use tempfile::TempDir;
 
 const INITIAL_CROP_FACTOR: f32 = 0.05; // 5%;
@@ -22,25 +22,56 @@ const INITIAL_CROP_FACTOR: f32 = 0.05; // 5%;
 // transparent.
 const BACKGROUND_CLEANUP_FACTOR: f32 = 0.02;
 
-const BACKGROUND_SIMILARITY_FACTOR_Y:f32 = 0.22;
-const BACKGROUND_SIMILARITY_FACTOR_UV:f32 = 0.15;
+const BACKGROUND_SIMILARITY_FACTOR_Y: f32 = 0.22;
+const BACKGROUND_SIMILARITY_FACTOR_UV: f32 = 0.15;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
-    let args: Vec<String> = env::args().collect();
+    let command = clap::Command::new("extractor")
+        .about("A program which processes photos of stickers")
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(
+            clap::Command::new("debug")
+                .about("Debug the extraction process")
+                .arg(clap::arg!(<INPUT_FILE> "The input file to process"))
+                .arg_required_else_help(true),
+        )
+        .subcommand(
+            clap::Command::new("extract")
+                .about("Run the extraction process for a directory")
+                .arg(clap::arg!(<SOURCE_DIRECTORY> "The source directory"))
+                .arg(clap::arg!(<TARGET_DIRECTORY> "The target directory")),
+        );
 
-    let readdir = fs::read_dir(&args[1])?;
-    let mut paths: Vec<String> = vec![];
-    for v in readdir {
-        paths.push(v?.path().to_string_lossy().to_string());
+    let matches = command.get_matches();
+
+    match matches.subcommand() {
+        Some(("debug", sub_matches)) => {
+            let file_path = sub_matches.get_one::<String>("INPUT_FILE").unwrap();
+            extract(file_path, "./", true)?;
+            Ok(())
+        }
+        Some(("extract", sub_matches)) => {
+            let source_directory = sub_matches.get_one::<String>("SOURCE_DIRECTORY").unwrap();
+            let target_directory = sub_matches.get_one::<String>("TARGET_DIRECTORY").unwrap();
+
+            let readdir =
+                fs::read_dir(source_directory).context("error listing the source directory")?;
+            let mut paths: Vec<String> = vec![];
+            for v in readdir {
+                paths.push(v?.path().to_string_lossy().to_string());
+            }
+
+            paths.par_iter().for_each(|file_path| {
+                extract(file_path, target_directory, false).unwrap();
+            });
+
+            Ok(())
+        }
+        _ => unreachable!(),
     }
-
-    paths.par_iter().for_each(|input_path| {
-        extract(input_path, &args[2], false).unwrap();
-    });
-
-    Ok(())
 }
 
 fn extract(input_path: &str, output_directory: &str, save_intermediate_images: bool) -> Result<()> {
@@ -76,7 +107,11 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     info!("Removing background...");
     let pixels = flood_fill(&img, markers.middle_of_top_edge(), |xy: &XY, yuv: &YUV| {
         let expected_color = background.check_color(xy);
-        expected_color.similar(yuv, BACKGROUND_SIMILARITY_FACTOR_Y, BACKGROUND_SIMILARITY_FACTOR_UV)
+        expected_color.similar(
+            yuv,
+            BACKGROUND_SIMILARITY_FACTOR_Y,
+            BACKGROUND_SIMILARITY_FACTOR_UV,
+        )
     });
     for pixel in pixels {
         img.put_pixel(pixel.x(), pixel.y(), TRANSPARENT);
