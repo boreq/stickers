@@ -355,7 +355,7 @@ impl YUV {
             return false;
         }
 
-        if (self.v - other.v) > epsilon_uv * 0.615 {
+        if (self.v - other.v).abs() > epsilon_uv * 0.615 {
             return false;
         }
 
