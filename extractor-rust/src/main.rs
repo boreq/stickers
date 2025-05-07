@@ -9,7 +9,7 @@ use extractor_rust::{
         is_at_least_this_much_of_image,
     },
 };
-use image::{ImageReader, Pixel, imageops::crop};
+use image::{ImageReader, Pixel, RgbaImage, imageops::crop};
 use log::info;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::HashSet, fs, path::Path, process::Command};
@@ -75,18 +75,13 @@ fn main() -> Result<()> {
 }
 
 fn extract(input_path: &str, output_directory: &str, save_intermediate_images: bool) -> Result<()> {
-    let path = Path::new(input_path);
-    let file_stem = path.file_stem().unwrap();
+    let mut preview = PreviewImagesSaver::new(input_path, save_intermediate_images)?;
 
     info!("Opening image {}...", input_path);
-
     let img = ImageReader::open(input_path)?.decode()?;
     let mut img = img.to_rgba8();
 
-    if save_intermediate_images {
-        info!("Writing preview image...");
-        img.save(format!("{}_stage0.png", file_stem.to_str().unwrap()))?;
-    }
+    preview.save(&img)?;
 
     info!("Locating markers...");
     let markers = Markers::find(&img)?;
@@ -96,10 +91,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
         marker.color(&mut img, &[255, 0, 0]);
     }
 
-    if save_intermediate_images {
-        info!("Writing preview image...");
-        img.save(format!("{}_stage1.png", file_stem.to_str().unwrap()))?;
-    }
+    preview.save(&img)?;
 
     info!("Analysing background...");
     let background = Background::analyse(&img, &markers)?;
@@ -117,11 +109,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
         img.put_pixel(pixel.x(), pixel.y(), TRANSPARENT);
     }
 
-    info!("Coloring markers...");
-    for marker in markers.markers() {
-        marker.color(&mut img, &[255, 0, 0]);
-    }
-
+    info!("Coloring background measurements...");
     for (area, color) in background.areas().iter() {
         area.color(&mut img, &color.rgb());
     }
@@ -131,10 +119,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     let magick_input = tmp_dir.path().join("input.png");
     let magick_output = tmp_dir.path().join("output.png");
 
-    if save_intermediate_images {
-        info!("Writing preview image...");
-        img.save(format!("{}_stage2.png", file_stem.to_str().unwrap()))?;
-    }
+    preview.save(&img)?;
 
     info!("Writing image...");
     img.save(&magick_input)?;
@@ -174,10 +159,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     let img = ImageReader::open(magick_output)?.decode()?;
     let mut img = img.to_rgba8();
 
-    if save_intermediate_images {
-        info!("Writing preview image...");
-        img.save(format!("{}_stage3.png", file_stem.to_str().unwrap()))?;
-    }
+    preview.save(&img)?;
 
     info!("Cropping...");
     let width = img.width();
@@ -192,10 +174,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     );
     let mut img = img.to_image();
 
-    if save_intermediate_images {
-        info!("Writing preview image...");
-        img.save(format!("{}_stage4.png", file_stem.to_str().unwrap()))?;
-    }
+    preview.save(&img)?;
 
     info!("Cleaning up background...");
     let mut skip: HashSet<XY> = HashSet::new();
@@ -230,12 +209,12 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
         }
     }
 
-    if save_intermediate_images {
-        info!("Writing preview image...");
-        img.save(format!("{}_stage5.png", file_stem.to_str().unwrap()))?;
-    }
+    preview.save(&img)?;
 
     info!("Final crop...");
+    let path = Path::new(&input_path);
+    let file_stem = path.file_stem().unwrap();
+
     let stickers = IdentifiedStickers::new(&img);
     for sticker in stickers.stickers() {
         let img = crop(
@@ -259,4 +238,32 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     }
 
     Ok(())
+}
+
+struct PreviewImagesSaver {
+    stem: String,
+    save_intermediate_images: bool,
+    stage_number: u32,
+}
+
+impl PreviewImagesSaver {
+    fn new(input_path: impl Into<String>, save_intermediate_images: bool) -> Result<Self> {
+        let input_path: String = input_path.into();
+        let path = Path::new(&input_path);
+        let stem = path.file_stem().unwrap();
+        Ok(Self {
+            stem: stem.to_str().unwrap().into(),
+            save_intermediate_images,
+            stage_number: 0,
+        })
+    }
+
+    fn save(&mut self, img: &RgbaImage) -> Result<()> {
+        if self.save_intermediate_images {
+            info!("Writing preview image...");
+            img.save(format!("{}_stage{}.png", self.stem, self.stage_number))?;
+            self.stage_number += 1;
+        }
+        Ok(())
+    }
 }
