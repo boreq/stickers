@@ -37,7 +37,7 @@ export default defineComponent({
 
   .sticker {
     height: 150px;
-    padding: .5em;
+    margin: .5em;
 
     img {
       max-width: 100%;
