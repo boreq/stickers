@@ -713,125 +713,97 @@ impl AverageColors {
     }
 }
 
+pub struct GradientPoint {
+    diff_l: f32, // [-1, 1]
+    diff_a: f32, // [-1, 1]
+    diff_b: f32, // [-1, 1]
+}
+
+impl GradientPoint {
+    pub fn diff_l(&self) -> f32 {
+        self.diff_l
+    }
+
+    pub fn diff_a(&self) -> f32 {
+        self.diff_a
+    }
+
+    pub fn diff_b(&self) -> f32 {
+        self.diff_b
+    }
+}
+
 pub struct Gradient {
     averaged_area_size: u32,
-    gradient: Vec<Vec<f32>>,
+    gradient: Vec<Vec<GradientPoint>>,
 }
 
 impl Gradient {
     pub fn new(img: &RgbaImage, average_colors: &AverageColors) -> Result<Self> {
-        //if averaged_area_size == 0 {
-        //    return Err(anyhow!("averaged area size can't be zero"));
-        //}
-
-        //let mut nx = img.width() / averaged_area_size;
-        //if img.width() % averaged_area_size != 0 {
-        //    nx += 1;
-        //}
-        //let mut ny = img.height() / averaged_area_size;
-        //if img.height() % averaged_area_size != 0 {
-        //    ny += 1;
-        //}
-
-        //let mut average_colors = vec![];
-        //for xi in 0..nx {
-        //    average_colors.push(vec![]);
-
-        //    for yi in 0..ny {
-        //        let left = xi * averaged_area_size;
-        //        let top = yi * averaged_area_size;
-
-        //        let max_x = img.width() - 1;
-        //        let max_y = img.height() - 1;
-
-        //        let mut width = averaged_area_size;
-        //        let mut height = averaged_area_size;
-        //        if left + width - 1 > max_x {
-        //            width = max_x - left;
-        //        }
-        //        if top + height - 1 > max_y {
-        //            height = max_y - top;
-        //        }
-
-        //        let area = Area::new(top, left, width, height, img)?;
-        //        let average_color = area.average_color(img)?;
-        //        let lab = average_color.lab();
-
-        //        average_colors[xi as usize].push(average_color);
-        //    }
-        //}
-        //
-
         let colors = &average_colors.average_colors;
 
         let mut gradient = vec![];
-        let mut max = 0.0;
-
         for xi in 0..colors.len() {
             let xi = xi;
             gradient.push(vec![]);
 
             for yi in 0..colors[xi].len() {
                 if xi == 0 || yi == 0 {
-                    gradient[xi].push(0.0);
+                    gradient[xi].push(GradientPoint {
+                        diff_l: 0.0,
+                        diff_a: 0.0,
+                        diff_b: 0.0,
+                    });
                 } else {
                     let color_up: LAB = colors[xi][yi - 1].lab();
                     let color_left: LAB = colors[xi - 1][yi].lab();
                     let color_up_left: LAB = colors[xi - 1][yi - 1].lab();
                     let color: LAB = colors[xi][yi].lab();
 
-                    //let diff_l = vec![
-                    //    (color_up.l() - color.l()).abs(),
-                    //    (color_left.l() - color.l()).abs(),
-                    //    (color_up_left.l() - color.l()).abs(),
-                    //]
-                    //.iter()
-                    //.max_by(|x, y| x.partial_cmp(&y).unwrap())
-                    //.unwrap()
-                    //.clone();
-
-                    //let diff_a = vec![
-                    //    (color_up.a() - color.a()).abs(),
-                    //    (color_left.a() - color.a()).abs(),
-                    //    (color_up_left.a() - color.a()).abs(),
-                    //]
-                    //.iter()
-                    //.max_by(|x, y| x.partial_cmp(&y).unwrap())
-                    //.unwrap()
-                    //.clone();
-
-                    //let diff_b = vec![
-                    //    (color_up.b() - color.b()).abs(),
-                    //    (color_left.b() - color.b()).abs(),
-                    //    (color_up_left.b() - color.b()).abs(),
-                    //]
-                    //.iter()
-                    //.max_by(|x, y| x.partial_cmp(&y).unwrap())
-                    //.unwrap()
-                    //.clone();
-
-                    let diff = *[
-                        color_up.distance(&color),
-                        color_left.distance(&color),
-                        color_up_left.distance(&color),
+                    let diff_l = *[
+                        (color_up.l() - color.l()),
+                        (color_left.l() - color.l()),
+                        (color_up_left.l() - color.l()),
                     ]
                     .iter()
-                    .max_by(|x, y| x.partial_cmp(y).unwrap())
+                    .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
                     .unwrap();
 
-                    if diff > max {
-                        max = diff;
-                    }
+                    let diff_a = *[
+                        (color_up.a() - color.a()),
+                        (color_left.a() - color.a()),
+                        (color_up_left.a() - color.a()),
+                    ]
+                    .iter()
+                    .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
+                    .unwrap();
 
-                    gradient[xi].push(diff);
+                    let diff_b = *[
+                        (color_up.b() - color.b()),
+                        (color_left.b() - color.b()),
+                        (color_up_left.b() - color.b()),
+                    ]
+                    .iter()
+                    .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
+                    .unwrap();
+
+                    //let diff = *[
+                    //    color_up.distance(&color),
+                    //    color_left.distance(&color),
+                    //    color_up_left.distance(&color),
+                    //]
+                    //.iter()
+                    //.max_by(|x, y| x.partial_cmp(y).unwrap())
+                    //.unwrap();
+
+                    gradient[xi].push(GradientPoint {
+                        diff_l,
+                        diff_a,
+                        diff_b,
+                    });
                 }
             }
         }
-
-        let gradient = gradient
-            .iter()
-            .map(|column| column.iter().map(|diff| diff / max).collect())
-            .collect();
 
         Ok(Self {
             averaged_area_size: average_colors.averaged_area_size,
@@ -839,10 +811,67 @@ impl Gradient {
         })
     }
 
-    pub fn get_gradient(&self, xy: &XY) -> f32 {
+    pub fn get_gradient(&self, xy: &XY) -> &GradientPoint {
         let xi = xy.x() / self.averaged_area_size;
         let yi = xy.y() / self.averaged_area_size;
-        self.gradient[xi as usize][yi as usize]
+        &self.gradient[xi as usize][yi as usize]
+    }
+}
+
+pub struct Edges {
+    averaged_area_size: u32,
+    distances: Vec<Vec<f32>>,
+}
+
+impl Edges {
+    pub fn new(img: &RgbaImage, gradient: &Gradient) -> Result<Self> {
+        let points = &gradient.gradient;
+
+        let mut distances = vec![];
+        let mut max = 0.0;
+
+        for xi in 0..points.len() {
+            let xi = xi;
+            distances.push(vec![]);
+
+            for yi in 0..points[xi].len() {
+                if xi == 0 || yi == 0 {
+                    distances[xi].push(0.0);
+                } else {
+                    let point = &points[xi][yi];
+
+                    let distance = (point.diff_l.powi(2) + point.diff_a.powi(2) + point.diff_b.powi(2)).sqrt();
+                    //let distance = point.diff_l;
+
+                    if distance  > max {
+                        max = distance;
+                    }
+
+                    distances[xi].push(distance);
+                }
+            }
+        }
+
+        let distances = distances
+            .iter()
+            .map(|column| {
+                column
+                    .iter()
+                    .map(|distance| distance / max)
+                    .collect()
+            })
+            .collect();
+
+        Ok(Self {
+            averaged_area_size: gradient.averaged_area_size,
+            distances,
+        })
+    }
+
+    pub fn get_distance(&self, xy: &XY) -> f32 {
+        let xi = xy.x() / self.averaged_area_size;
+        let yi = xy.y() / self.averaged_area_size;
+        self.distances[xi as usize][yi as usize]
     }
 }
 

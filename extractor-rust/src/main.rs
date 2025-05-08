@@ -3,28 +3,30 @@
 use anyhow::Context;
 use env_logger::Env;
 use extractor_rust::{
-    color::{Color, RGB},
+    color::{Color, LAB, RGB},
     errors::Result,
     extractor::{
-        AverageColors, Background, Gradient, IdentifiedStickers, Markers, TRANSPARENT, XY,
-        flood_fill, is_at_least_this_much_of_image,
+        flood_fill, is_at_least_this_much_of_image, AverageColors, Background, Edges, Gradient, IdentifiedStickers, Markers, TRANSPARENT, XY
     },
 };
 use image::{ImageReader, Pixel, Rgb, RgbaImage, imageops::crop};
-use log::info;
+use log::{info, warn};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::HashSet, fs, path::Path, process::Command};
 use tempfile::TempDir;
 
 const INITIAL_CROP_FACTOR: f32 = 0.05; // 5%;
+      
+// If a normalised distance between LAB colors of detection points is above this factor an edge is
+// detected. So lower number -> less likely to go through edges.
+const EDGE_DETECTION_FACTOR: f32 = 0.07;
 
 // If a group of non-transparent pixels constitutes
 // less than 2% of the image it will be made
 // transparent.
 const BACKGROUND_CLEANUP_FACTOR: f32 = 0.02;
 
-// 0.5%; fraction of image width.
-const LARGER_GRADIENT_PIXEL_FACTOR: f32 = 0.005;
+const EDGE_DETECTION_RESOLUTION: u32 = 1;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -94,8 +96,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     preview.save(&img)?;
 
     info!("Generating average colors...");
-    let gradient_size = 1;
-    let average_colors = AverageColors::new(&img, gradient_size)?;
+    let average_colors = AverageColors::new(&img, EDGE_DETECTION_RESOLUTION)?;
 
     let mut average_colors_img = img.clone();
     for x in 0..average_colors_img.width() {
@@ -115,43 +116,46 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     for x in 0..gradient_img.width() {
         for y in 0..gradient_img.height() {
             let xy = XY::new(x, y);
-            let gradient = gradient.get_gradient(&xy);
-            let color = (gradient * 255.0) as u8;
-            gradient_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
+            let gradient_point = gradient.get_gradient(&xy);
+
+            let l = (gradient_point.diff_l() + 1.0) / 2.0 * 100.0;
+            //let l = gradient_point.diff_l() * 100.0;
+            let color = LAB::new(l, gradient_point.diff_a() * 80.0, gradient_point.diff_b() * 80.0)?;
+            //let color = LAB::new(50.0, l, l)?;
+            let color: Color = color.into();
+            let color: RGB = color.rgb();
+
+            //let l = ((gradient_point.diff_b() + 1.0) / 2.0 * 255.0) as u8;
+            //let color: RGB = RGB::new(l, l, l);
+            gradient_img.put_pixel(x, y, Rgb([color.r(), color.g(), color.b()]).to_rgba());
             //gradient_img.put_pixel(x, y, Rgb([gradient, gradient, gradient]).to_rgba());
         }
     }
     preview.save(&gradient_img)?;
 
-    info!("Generating large average colors...");
-    let gradient_size = (img.width() as f32 * LARGER_GRADIENT_PIXEL_FACTOR) as u32;
-    let large_average_colors = AverageColors::new(&img, gradient_size)?;
+    info!("Detecting edges...");
+    let edges = Edges::new(&img, &gradient)?;
 
-    let mut large_average_colors_img = img.clone();
-    for x in 0..large_average_colors_img.width() {
-        for y in 0..large_average_colors_img.height() {
+    let mut edges_img = img.clone();
+    for x in 0..edges_img.width() {
+        for y in 0..edges_img.height() {
             let xy = XY::new(x, y);
-            let color = large_average_colors.average_color(&xy);
-            let rgb = color.rgb();
-            large_average_colors_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
+            let distance = edges.get_distance(&xy);
+
+            //let l = (gradient_point.diff_l() + 1.0) / 2.0 * 100.0;
+            //let l = gradient_point.diff_l() * 100.0;
+            let component = -1.0 + 2.0 * distance * 100.0;
+            let color = LAB::new(100.0, component, component)?;
+            //let color = LAB::new(50.0, l, l)?;
+            let color: Color = color.into();
+            let color: RGB = color.rgb();
+
+            //let l = ((gradient_point.diff_b() + 1.0) / 2.0 * 255.0) as u8;
+            //let color: RGB = RGB::new(l, l, l);
+            edges_img.put_pixel(x, y, Rgb([color.r(), color.g(), color.b()]).to_rgba());
         }
     }
-    preview.save(&large_average_colors_img)?;
-
-    info!("Generating a large gradient...");
-    let large_gradient = Gradient::new(&img, &large_average_colors)?;
-
-    let mut large_gradient_img = img.clone();
-    for x in 0..large_gradient_img.width() {
-        for y in 0..large_gradient_img.height() {
-            let xy = XY::new(x, y);
-            let gradient = large_gradient.get_gradient(&xy);
-            let color = (gradient * 255.0) as u8;
-            large_gradient_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
-            //gradient_img.put_pixel(x, y, Rgb([gradient, gradient, gradient]).to_rgba());
-        }
-    }
-    preview.save(&large_gradient_img)?;
+    preview.save(&edges_img)?;
 
     info!("Analysing background...");
     let background = Background::analyse(&img, &markers)?;
@@ -161,15 +165,14 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
         &img,
         markers.middle_of_top_edge(),
         |xy: &XY, _color: &Color| {
-            let gradient = gradient.get_gradient(xy);
-            let large_gradient = large_gradient.get_gradient(xy);
+            let distance = edges.get_distance(xy);
             //let gradient_color: LAB = gradient_color.lab();
 
             //let distance = (gradient_color.y().powi(4)
             //    + gradient_color.u().powi(2)
             //    + gradient_color.v().powi(2))
             //.sqrt();
-            gradient < 0.05 && large_gradient < 0.1
+            distance < EDGE_DETECTION_FACTOR
 
             //if gradient_color.y() > 0.1 {
             //    return false;
