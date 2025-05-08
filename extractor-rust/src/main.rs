@@ -3,13 +3,14 @@
 use anyhow::Context;
 use env_logger::Env;
 use extractor_rust::{
+    color::{Color, RGB, YUV},
     errors::Result,
     extractor::{
-        Background, IdentifiedStickers, Markers, TRANSPARENT, XY, YUV, flood_fill,
+        Background, Gradient, IdentifiedStickers, Markers, TRANSPARENT, XY, flood_fill,
         is_at_least_this_much_of_image,
     },
 };
-use image::{ImageReader, Pixel, RgbaImage, imageops::crop};
+use image::{ImageReader, Pixel, Rgb, RgbaImage, imageops::crop};
 use log::info;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::HashSet, fs, path::Path, process::Command};
@@ -24,6 +25,8 @@ const BACKGROUND_CLEANUP_FACTOR: f32 = 0.02;
 
 const BACKGROUND_SIMILARITY_FACTOR_Y: f32 = 0.22;
 const BACKGROUND_SIMILARITY_FACTOR_UV: f32 = 0.15;
+
+const GRADIENT_PIXEL_FACTOR: f32 = 0.003; // 0.3%; fraction of image width.
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -85,31 +88,73 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     let markers = Markers::find(&img)?;
 
     info!("Coloring markers...");
+    let red: Color = RGB::new(255, 0, 0).into();
     for marker in markers.markers() {
-        marker.color(&mut img, &[255, 0, 0]);
+        marker.color(&mut img, &red);
     }
 
     preview.save(&img)?;
+
+    info!("Generating a gradient...");
+    let gradient_size = (img.width() as f32 * GRADIENT_PIXEL_FACTOR) as u32;
+    let gradient = Gradient::new(&img, gradient_size)?;
+
+    //let mut gradient_img = img.clone();
+    //for x in 0..gradient_img.width() {
+    //    for y in 0..gradient_img.height() {
+    //        let xy = XY::new(x, y);
+    //        let yuv = gradient.get_gradient(&xy);
+    //        gradient_img.put_pixel(x, y, Rgb(yuv.rgb()).to_rgba());
+    //    }
+    //}
+    //preview.save(&gradient_img)?;
 
     info!("Analysing background...");
     let background = Background::analyse(&img, &markers)?;
 
     info!("Removing background...");
-    let pixels = flood_fill(&img, markers.middle_of_top_edge(), |xy: &XY, yuv: &YUV| {
-        let expected_color = background.check_color(xy);
-        expected_color.similar(
-            yuv,
-            BACKGROUND_SIMILARITY_FACTOR_Y,
-            BACKGROUND_SIMILARITY_FACTOR_UV,
-        )
-    });
+    let pixels = flood_fill(
+        &img,
+        markers.middle_of_top_edge(),
+        |xy: &XY, _color: &Color| {
+            let gradient_color = gradient.get_gradient(xy);
+            let gradient_color: YUV = gradient_color.yuv();
+
+            let distance = (gradient_color.y().powi(4)
+                + gradient_color.u().powi(2)
+                + gradient_color.v().powi(2))
+            .sqrt();
+            distance < 0.02
+
+            //if gradient_color.y() > 0.1 {
+            //    return false;
+            //}
+
+            //if gradient_color.u() > 0.02 {
+            //    return false;
+            //}
+
+            //if gradient_color.v() > 0.05 {
+            //    return false;
+            //}
+
+            //true
+
+            //let expected_color = background.check_color(xy);
+            //expected_color.similar(
+            //    yuv,
+            //    BACKGROUND_SIMILARITY_FACTOR_Y,
+            //    BACKGROUND_SIMILARITY_FACTOR_UV,
+            //)
+        },
+    );
     for pixel in pixels {
         img.put_pixel(pixel.x(), pixel.y(), TRANSPARENT);
     }
 
     info!("Coloring background measurements...");
     for (area, color) in background.areas().iter() {
-        area.color(&mut img, &color.rgb());
+        area.color(&mut img, color);
     }
 
     preview.save(&img)?;
@@ -190,7 +235,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
                 continue;
             }
 
-            let pixels = flood_fill(&img, xy, |xy: &XY, _yuv: &YUV| {
+            let pixels = flood_fill(&img, xy, |xy: &XY, color: &Color| {
                 let color = img.get_pixel(xy.x(), xy.y());
                 color.to_rgba() != TRANSPARENT
             });
