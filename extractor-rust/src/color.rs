@@ -26,7 +26,12 @@ impl Color {
         match &self.color {
             SomeColor::RGB(rgb) => rgb.into(),
             SomeColor::YUV(yuv) => yuv.clone(),
-            SomeColor::LAB(_lab) => todo!(),
+            SomeColor::LAB(lab) => {
+                let xyz: XYZ = lab.into();
+                let rgb: RGB = (&xyz).into();
+                let yuv: YUV = (&rgb).into();
+                yuv
+            }
         }
     }
 
@@ -37,7 +42,12 @@ impl Color {
                 let lab: LAB = (&xyz).into();
                 lab
             }
-            SomeColor::YUV(_yuv) => todo!(),
+            SomeColor::YUV(yuv) => {
+                let rgb: RGB = yuv.into();
+                let xyz: XYZ = (&rgb).into();
+                let lab: LAB = (&xyz).into();
+                lab
+            }
             SomeColor::LAB(lab) => lab.clone(),
         }
     }
@@ -121,17 +131,17 @@ impl From<&XYZ> for RGB {
         if var_R > 0.0031308 {
             var_R = 1.055 * (var_R.powf(1.0 / 2.4)) - 0.055
         } else {
-            var_R = 12.92 * var_R
+            var_R *= 12.92
         }
         if var_G > 0.0031308 {
             var_G = 1.055 * (var_G.powf(1.0 / 2.4)) - 0.055
         } else {
-            var_G = 12.92 * var_G
+            var_G *= 12.92
         }
         if var_B > 0.0031308 {
             var_B = 1.055 * (var_B.powf(1.0 / 2.4)) - 0.055
         } else {
-            var_B = 12.92 * var_B
+            var_B *= 12.92
         }
 
         let sR = var_R * 255.0;
@@ -231,6 +241,29 @@ pub struct LAB {
     b: f32,
 }
 
+impl LAB {
+    pub fn new(l: f32, a: f32, b: f32) -> Result<Self> {
+        Ok(Self { l, a, b })
+    }
+
+    pub fn distance(&self, other: &LAB) -> f32 {
+        ((other.l - self.l).powi(2) + (other.a - self.a).powi(2) + (other.b - self.b).powi(2))
+            .sqrt()
+    }
+
+    pub fn l(&self) -> f32 {
+        self.l
+    }
+
+    pub fn a(&self) -> f32 {
+        self.a
+    }
+
+    pub fn b(&self) -> f32 {
+        self.b
+    }
+}
+
 impl From<&XYZ> for LAB {
     fn from(value: &XYZ) -> Self {
         //Reference-X, Y and Z refer to specific illuminants and observers.
@@ -284,24 +317,24 @@ impl From<&RGB> for XYZ {
         if var_R > 0.04045 {
             var_R = ((var_R + 0.055) / 1.055).powf(2.4)
         } else {
-            var_R = var_R / 12.92;
+            var_R /= 12.92;
         }
 
         if var_G > 0.04045 {
             var_G = ((var_G + 0.055) / 1.055).powf(2.4);
         } else {
-            var_G = var_G / 12.92;
+            var_G /= 12.92;
         }
 
         if var_B > 0.04045 {
             var_B = ((var_B + 0.055) / 1.055).powf(2.4);
         } else {
-            var_B = var_B / 12.92
+            var_B /= 12.92
         }
 
-        var_R = var_R * 100.0;
-        var_G = var_G * 100.0;
-        var_B = var_B * 100.0;
+        var_R *= 100.0;
+        var_G *= 100.0;
+        var_B *= 100.0;
 
         let x = var_R * 0.4124 + var_G * 0.3576 + var_B * 0.1805;
         let y = var_R * 0.2126 + var_G * 0.7152 + var_B * 0.0722;

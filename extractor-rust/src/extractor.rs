@@ -1,5 +1,5 @@
 use crate::{
-    color::{Color, RGB, YUV},
+    color::{Color, LAB, RGB, YUV},
     errors::Result,
 };
 use anyhow::anyhow;
@@ -206,7 +206,7 @@ impl Background {
                 height: marker_height,
             };
 
-            let color: Color = area.average_color(img)?.into();
+            let color: Color = area.average_color(img)?;
             areas.insert(area, color);
         }
 
@@ -410,36 +410,56 @@ impl Area {
         }
     }
 
-    fn average_color(&self, img: &RgbaImage) -> Result<YUV> {
-        let mut y: Option<f32> = None;
-        let mut u: Option<f32> = None;
-        let mut v: Option<f32> = None;
+    fn average_color(&self, img: &RgbaImage) -> Result<Color> {
+        //let mut y: Option<f32> = None;
+        //let mut u: Option<f32> = None;
+        //let mut v: Option<f32> = None;
+
+        let mut r: Option<f32> = None;
+        let mut g: Option<f32> = None;
+        let mut b: Option<f32> = None;
 
         for px in self.left..(self.right() + 1) {
             for py in self.top..(self.bottom() + 1) {
                 let pixel = img.get_pixel(px, py);
                 let rgb: RGB = pixel.to_rgb().into();
-                let color: Color = rgb.into();
-                let yuv: YUV = color.yuv();
+                //let color: Color = rgb.into();
+                //let yuv: YUV = color.yuv();
 
-                y = match y {
-                    Some(y) => Some((y + yuv.y()) / 2.0),
-                    None => Some(yuv.y()),
+                //y = match y {
+                //    Some(y) => Some((y + yuv.y()) / 2.0),
+                //    None => Some(yuv.y()),
+                //};
+
+                //u = match u {
+                //    Some(u) => Some((u + yuv.u()) / 2.0),
+                //    None => Some(yuv.u()),
+                //};
+
+                //v = match v {
+                //    Some(v) => Some((v + yuv.v()) / 2.0),
+                //    None => Some(yuv.v()),
+                //};
+
+                r = match r {
+                    Some(r) => Some((r + rgb.r() as f32) / 2.0),
+                    None => Some(rgb.r() as f32),
                 };
 
-                u = match u {
-                    Some(u) => Some((u + yuv.u()) / 2.0),
-                    None => Some(yuv.u()),
+                g = match g {
+                    Some(g) => Some((g + rgb.g() as f32) / 2.0),
+                    None => Some(rgb.g() as f32),
                 };
 
-                v = match v {
-                    Some(v) => Some((v + yuv.v()) / 2.0),
-                    None => Some(yuv.v()),
+                b = match b {
+                    Some(b) => Some((b + rgb.b() as f32) / 2.0),
+                    None => Some(rgb.b() as f32),
                 };
             }
         }
 
-        YUV::new(y.unwrap(), u.unwrap(), v.unwrap())
+        //Ok(YUV::new(y.unwrap(), u.unwrap(), v.unwrap())?.into())
+        Ok(RGB::new(r.unwrap() as u8, g.unwrap() as u8, b.unwrap() as u8).into())
     }
 
     pub fn top(&self) -> u32 {
@@ -629,12 +649,12 @@ impl IdentifiedStickers {
     }
 }
 
-pub struct Gradient {
+pub struct AverageColors {
     averaged_area_size: u32,
-    gradient: Vec<Vec<Color>>,
+    average_colors: Vec<Vec<Color>>,
 }
 
-impl Gradient {
+impl AverageColors {
     pub fn new(img: &RgbaImage, averaged_area_size: u32) -> Result<Self> {
         if averaged_area_size == 0 {
             return Err(anyhow!("averaged area size can't be zero"));
@@ -676,65 +696,153 @@ impl Gradient {
             }
         }
 
+        Ok(Self {
+            averaged_area_size,
+            average_colors,
+        })
+    }
+
+    pub fn averaged_area_size(&self) -> u32 {
+        self.averaged_area_size
+    }
+
+    pub fn average_color(&self, xy: &XY) -> &Color {
+        let xi = xy.x() / self.averaged_area_size;
+        let yi = xy.y() / self.averaged_area_size;
+        &self.average_colors[xi as usize][yi as usize]
+    }
+}
+
+pub struct Gradient {
+    averaged_area_size: u32,
+    gradient: Vec<Vec<f32>>,
+}
+
+impl Gradient {
+    pub fn new(img: &RgbaImage, average_colors: &AverageColors) -> Result<Self> {
+        //if averaged_area_size == 0 {
+        //    return Err(anyhow!("averaged area size can't be zero"));
+        //}
+
+        //let mut nx = img.width() / averaged_area_size;
+        //if img.width() % averaged_area_size != 0 {
+        //    nx += 1;
+        //}
+        //let mut ny = img.height() / averaged_area_size;
+        //if img.height() % averaged_area_size != 0 {
+        //    ny += 1;
+        //}
+
+        //let mut average_colors = vec![];
+        //for xi in 0..nx {
+        //    average_colors.push(vec![]);
+
+        //    for yi in 0..ny {
+        //        let left = xi * averaged_area_size;
+        //        let top = yi * averaged_area_size;
+
+        //        let max_x = img.width() - 1;
+        //        let max_y = img.height() - 1;
+
+        //        let mut width = averaged_area_size;
+        //        let mut height = averaged_area_size;
+        //        if left + width - 1 > max_x {
+        //            width = max_x - left;
+        //        }
+        //        if top + height - 1 > max_y {
+        //            height = max_y - top;
+        //        }
+
+        //        let area = Area::new(top, left, width, height, img)?;
+        //        let average_color = area.average_color(img)?;
+        //        let lab = average_color.lab();
+
+        //        average_colors[xi as usize].push(average_color);
+        //    }
+        //}
+        //
+
+        let colors = &average_colors.average_colors;
+
         let mut gradient = vec![];
-        for xi in 0..average_colors.len() {
-            let xi = xi as usize;
+        let mut max = 0.0;
+
+        for xi in 0..colors.len() {
+            let xi = xi;
             gradient.push(vec![]);
 
-            for yi in 0..average_colors[xi].len() {
+            for yi in 0..colors[xi].len() {
                 if xi == 0 || yi == 0 {
-                    gradient[xi].push(YUV::new(0.0, 0.0, 0.0)?.into());
+                    gradient[xi].push(0.0);
                 } else {
-                    let color_up: YUV = average_colors[xi][yi - 1].clone().into();
-                    let color_left: YUV = average_colors[xi - 1][yi].clone().into();
-                    let color_up_left: YUV = average_colors[xi - 1][yi - 1].clone().into();
-                    let color: YUV = average_colors[xi][yi].clone().into();
+                    let color_up: LAB = colors[xi][yi - 1].lab();
+                    let color_left: LAB = colors[xi - 1][yi].lab();
+                    let color_up_left: LAB = colors[xi - 1][yi - 1].lab();
+                    let color: LAB = colors[xi][yi].lab();
 
-                    let diff_y = vec![
-                        (color_up.y() - color.y()).abs(),
-                        (color_left.y() - color.y()).abs(),
-                        (color_up_left.y() - color.y()).abs(),
+                    //let diff_l = vec![
+                    //    (color_up.l() - color.l()).abs(),
+                    //    (color_left.l() - color.l()).abs(),
+                    //    (color_up_left.l() - color.l()).abs(),
+                    //]
+                    //.iter()
+                    //.max_by(|x, y| x.partial_cmp(&y).unwrap())
+                    //.unwrap()
+                    //.clone();
+
+                    //let diff_a = vec![
+                    //    (color_up.a() - color.a()).abs(),
+                    //    (color_left.a() - color.a()).abs(),
+                    //    (color_up_left.a() - color.a()).abs(),
+                    //]
+                    //.iter()
+                    //.max_by(|x, y| x.partial_cmp(&y).unwrap())
+                    //.unwrap()
+                    //.clone();
+
+                    //let diff_b = vec![
+                    //    (color_up.b() - color.b()).abs(),
+                    //    (color_left.b() - color.b()).abs(),
+                    //    (color_up_left.b() - color.b()).abs(),
+                    //]
+                    //.iter()
+                    //.max_by(|x, y| x.partial_cmp(&y).unwrap())
+                    //.unwrap()
+                    //.clone();
+
+                    let diff = *[
+                        color_up.distance(&color),
+                        color_left.distance(&color),
+                        color_up_left.distance(&color),
                     ]
                     .iter()
-                    .max_by(|x, y| x.partial_cmp(&y).unwrap())
-                    .unwrap()
-                    .clone();
+                    .max_by(|x, y| x.partial_cmp(y).unwrap())
+                    .unwrap();
 
-                    let diff_u = vec![
-                        (color_up.u() - color.u()).abs(),
-                        (color_left.u() - color.u()).abs(),
-                        (color_up_left.u() - color.u()).abs(),
-                    ]
-                    .iter()
-                    .max_by(|x, y| x.partial_cmp(&y).unwrap())
-                    .unwrap()
-                    .clone();
+                    if diff > max {
+                        max = diff;
+                    }
 
-                    let diff_v = vec![
-                        (color_up.v() - color.v()).abs(),
-                        (color_left.v() - color.v()).abs(),
-                        (color_up_left.v() - color.v()).abs(),
-                    ]
-                    .iter()
-                    .max_by(|x, y| x.partial_cmp(&y).unwrap())
-                    .unwrap()
-                    .clone();
-
-                    let yuv = YUV::new(diff_y, diff_u, diff_v)?;
-                    gradient[xi].push(yuv.into());
+                    gradient[xi].push(diff);
                 }
             }
         }
+
+        let gradient = gradient
+            .iter()
+            .map(|column| column.iter().map(|diff| diff / max).collect())
+            .collect();
+
         Ok(Self {
-            averaged_area_size,
+            averaged_area_size: average_colors.averaged_area_size,
             gradient,
         })
     }
 
-    pub fn get_gradient(&self, xy: &XY) -> &Color {
+    pub fn get_gradient(&self, xy: &XY) -> f32 {
         let xi = xy.x() / self.averaged_area_size;
         let yi = xy.y() / self.averaged_area_size;
-        &self.gradient[xi as usize][yi as usize]
+        self.gradient[xi as usize][yi as usize]
     }
 }
 

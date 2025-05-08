@@ -3,11 +3,11 @@
 use anyhow::Context;
 use env_logger::Env;
 use extractor_rust::{
-    color::{Color, RGB, YUV},
+    color::{Color, RGB},
     errors::Result,
     extractor::{
-        Background, Gradient, IdentifiedStickers, Markers, TRANSPARENT, XY, flood_fill,
-        is_at_least_this_much_of_image,
+        AverageColors, Background, Gradient, IdentifiedStickers, Markers, TRANSPARENT, XY,
+        flood_fill, is_at_least_this_much_of_image,
     },
 };
 use image::{ImageReader, Pixel, Rgb, RgbaImage, imageops::crop};
@@ -23,10 +23,8 @@ const INITIAL_CROP_FACTOR: f32 = 0.05; // 5%;
 // transparent.
 const BACKGROUND_CLEANUP_FACTOR: f32 = 0.02;
 
-const BACKGROUND_SIMILARITY_FACTOR_Y: f32 = 0.22;
-const BACKGROUND_SIMILARITY_FACTOR_UV: f32 = 0.15;
-
-const GRADIENT_PIXEL_FACTOR: f32 = 0.003; // 0.3%; fraction of image width.
+// 0.5%; fraction of image width.
+const LARGER_GRADIENT_PIXEL_FACTOR: f32 = 0.005;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -95,19 +93,65 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
 
     preview.save(&img)?;
 
-    info!("Generating a gradient...");
-    let gradient_size = (img.width() as f32 * GRADIENT_PIXEL_FACTOR) as u32;
-    let gradient = Gradient::new(&img, gradient_size)?;
+    info!("Generating average colors...");
+    let gradient_size = 1;
+    let average_colors = AverageColors::new(&img, gradient_size)?;
 
-    //let mut gradient_img = img.clone();
-    //for x in 0..gradient_img.width() {
-    //    for y in 0..gradient_img.height() {
-    //        let xy = XY::new(x, y);
-    //        let yuv = gradient.get_gradient(&xy);
-    //        gradient_img.put_pixel(x, y, Rgb(yuv.rgb()).to_rgba());
-    //    }
-    //}
-    //preview.save(&gradient_img)?;
+    let mut average_colors_img = img.clone();
+    for x in 0..average_colors_img.width() {
+        for y in 0..average_colors_img.height() {
+            let xy = XY::new(x, y);
+            let color = average_colors.average_color(&xy);
+            let rgb = color.rgb();
+            average_colors_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
+        }
+    }
+    preview.save(&average_colors_img)?;
+
+    info!("Generating a gradient...");
+    let gradient = Gradient::new(&img, &average_colors)?;
+
+    let mut gradient_img = img.clone();
+    for x in 0..gradient_img.width() {
+        for y in 0..gradient_img.height() {
+            let xy = XY::new(x, y);
+            let gradient = gradient.get_gradient(&xy);
+            let color = (gradient * 255.0) as u8;
+            gradient_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
+            //gradient_img.put_pixel(x, y, Rgb([gradient, gradient, gradient]).to_rgba());
+        }
+    }
+    preview.save(&gradient_img)?;
+
+    info!("Generating large average colors...");
+    let gradient_size = (img.width() as f32 * LARGER_GRADIENT_PIXEL_FACTOR) as u32;
+    let large_average_colors = AverageColors::new(&img, gradient_size)?;
+
+    let mut large_average_colors_img = img.clone();
+    for x in 0..large_average_colors_img.width() {
+        for y in 0..large_average_colors_img.height() {
+            let xy = XY::new(x, y);
+            let color = large_average_colors.average_color(&xy);
+            let rgb = color.rgb();
+            large_average_colors_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
+        }
+    }
+    preview.save(&large_average_colors_img)?;
+
+    info!("Generating a large gradient...");
+    let large_gradient = Gradient::new(&img, &large_average_colors)?;
+
+    let mut large_gradient_img = img.clone();
+    for x in 0..large_gradient_img.width() {
+        for y in 0..large_gradient_img.height() {
+            let xy = XY::new(x, y);
+            let gradient = large_gradient.get_gradient(&xy);
+            let color = (gradient * 255.0) as u8;
+            large_gradient_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
+            //gradient_img.put_pixel(x, y, Rgb([gradient, gradient, gradient]).to_rgba());
+        }
+    }
+    preview.save(&large_gradient_img)?;
 
     info!("Analysing background...");
     let background = Background::analyse(&img, &markers)?;
@@ -117,14 +161,15 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
         &img,
         markers.middle_of_top_edge(),
         |xy: &XY, _color: &Color| {
-            let gradient_color = gradient.get_gradient(xy);
-            let gradient_color: YUV = gradient_color.yuv();
+            let gradient = gradient.get_gradient(xy);
+            let large_gradient = large_gradient.get_gradient(xy);
+            //let gradient_color: LAB = gradient_color.lab();
 
-            let distance = (gradient_color.y().powi(4)
-                + gradient_color.u().powi(2)
-                + gradient_color.v().powi(2))
-            .sqrt();
-            distance < 0.02
+            //let distance = (gradient_color.y().powi(4)
+            //    + gradient_color.u().powi(2)
+            //    + gradient_color.v().powi(2))
+            //.sqrt();
+            gradient < 0.05 && large_gradient < 0.1
 
             //if gradient_color.y() > 0.1 {
             //    return false;
