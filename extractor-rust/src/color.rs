@@ -1,5 +1,6 @@
 use crate::errors::Result;
 use anyhow::anyhow;
+use image::Rgb;
 
 const Reference_X: f32 = 109.850;
 const Reference_Y: f32 = 100.000;
@@ -74,6 +75,13 @@ impl From<LAB> for Color {
         Self {
             color: SomeColor::LAB(value),
         }
+    }
+}
+
+impl From<Rgb<u8>> for Color {
+    fn from(value: Rgb<u8>) -> Self {
+        let [r, g, b] = value.0;
+        RGB::new(r, g, b).into()
     }
 }
 

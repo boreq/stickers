@@ -3,7 +3,7 @@ use crate::{
     errors::Result,
 };
 use anyhow::anyhow;
-use image::{Pixel, Rgb, Rgba, RgbaImage};
+use image::{GenericImageView, Pixel, Rgb, Rgba, RgbaImage};
 use std::{
     cmp,
     collections::{HashMap, HashSet},
@@ -221,8 +221,9 @@ impl Background {
 
         for (area, color) in self.areas.iter() {
             let yuv = color.yuv();
-            // mult to bias towards closer points
-            let distance = 1.0 / (xy.distance(&area.center()).powi(2));
+            // powi to bias towards closer points
+            let distance = 1.0 / (xy.distance(&area.center()).powi(3));
+            //let distance = 1.0 / xy.distance(&area.center());
             y += distance * yuv.y();
             u += distance * yuv.u();
             v += distance * yuv.v();
@@ -818,6 +819,81 @@ impl Gradient {
     }
 }
 
+pub struct NormalisedBackgroundDifference {
+    pub diff_l: f32, // [-1, 1]
+    pub diff_a: f32, // [-1, 1]
+    pub diff_b: f32, // [-1, 1]
+}
+
+pub struct BackgroundDifference {
+    distances: Vec<Vec<NormalisedBackgroundDifference>>,
+}
+
+impl BackgroundDifference {
+    pub fn new(img: &RgbaImage, background: &Background) -> Result<Self> {
+        let mut distances = vec![];
+
+        let mut max_l = 0.0;
+        let mut max_a = 0.0;
+        let mut max_b = 0.0;
+
+        for xi in 0..img.width() {
+            let xi = xi;
+            distances.push(vec![]);
+
+            for yi in 0..img.height() {
+                let xy = XY::new(xi, yi);
+
+                let background_color: LAB = background.check_color(&xy).lab();
+                let color: Color = img.get_pixel(xy.x(), xy.y()).to_rgb().into();
+                let color: LAB = color.lab();
+
+                let distance_l = color.l() - background_color.l();
+                let distance_a = color.a() - background_color.a();
+                let distance_b = color.b() - background_color.b();
+
+                if distance_l > max_l {
+                    max_l = distance_l;
+                }
+
+                if distance_a > max_a {
+                    max_a = distance_a;
+                }
+
+                if distance_b > max_b {
+                    max_b = distance_b;
+                }
+
+                distances[xi as usize].push(NormalisedBackgroundDifference {
+                    diff_l: distance_l,
+                    diff_a: distance_a,
+                    diff_b: distance_b,
+                });
+            }
+        }
+
+        let distances = distances
+            .iter()
+            .map(|column| {
+                column
+                    .iter()
+                    .map(|distance| NormalisedBackgroundDifference {
+                        diff_l: distance.diff_l / max_l,
+                        diff_a: distance.diff_a / max_a,
+                        diff_b: distance.diff_b / max_b,
+                    })
+                    .collect()
+            })
+            .collect();
+
+        Ok(Self { distances })
+    }
+
+    pub fn get(&self, xy: &XY) -> &NormalisedBackgroundDifference {
+        &self.distances[xy.x() as usize][xy.y() as usize]
+    }
+}
+
 pub struct Edges {
     averaged_area_size: u32,
     distances: Vec<Vec<f32>>,
@@ -840,10 +916,11 @@ impl Edges {
                 } else {
                     let point = &points[xi][yi];
 
-                    let distance = (point.diff_l.powi(2) + point.diff_a.powi(2) + point.diff_b.powi(2)).sqrt();
+                    let distance =
+                        (point.diff_l.powi(2) + point.diff_a.powi(2) + point.diff_b.powi(2)).sqrt();
                     //let distance = point.diff_l;
 
-                    if distance  > max {
+                    if distance > max {
                         max = distance;
                     }
 
@@ -854,12 +931,7 @@ impl Edges {
 
         let distances = distances
             .iter()
-            .map(|column| {
-                column
-                    .iter()
-                    .map(|distance| distance / max)
-                    .collect()
-            })
+            .map(|column| column.iter().map(|distance| distance / max).collect())
             .collect();
 
         Ok(Self {

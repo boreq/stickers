@@ -6,27 +6,31 @@ use extractor_rust::{
     color::{Color, LAB, RGB},
     errors::Result,
     extractor::{
-        flood_fill, is_at_least_this_much_of_image, AverageColors, Background, Edges, Gradient, IdentifiedStickers, Markers, TRANSPARENT, XY
+        Background, BackgroundDifference, IdentifiedStickers, Markers, TRANSPARENT, XY, flood_fill,
+        is_at_least_this_much_of_image,
     },
 };
-use image::{ImageReader, Pixel, Rgb, RgbaImage, imageops::crop};
-use log::{info, warn};
+use image::{GenericImageView, ImageReader, Pixel, Rgb, RgbaImage, imageops::crop};
+use log::info;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::HashSet, fs, path::Path, process::Command};
 use tempfile::TempDir;
 
 const INITIAL_CROP_FACTOR: f32 = 0.05; // 5%;
-      
-// If a normalised distance between LAB colors of detection points is above this factor an edge is
-// detected. So lower number -> less likely to go through edges.
-const EDGE_DETECTION_FACTOR: f32 = 0.07;
+
+const BACKGROUND_DETECTION_FACTOR_L_POSITIVE: f32 = 0.3;
+const BACKGROUND_DETECTION_FACTOR_L_NEGATIVE: f32 = 0.15;
+
+const BACKGROUND_DETECTION_FACTOR_A_POSITIVE: f32 = 0.05;
+const BACKGROUND_DETECTION_FACTOR_A_NEGATIVE: f32 = 0.15;
+
+const BACKGROUND_DETECTION_FACTOR_B_POSITIVE: f32 = 0.3;
+const BACKGROUND_DETECTION_FACTOR_B_NEGATIVE: f32 = 0.3;
 
 // If a group of non-transparent pixels constitutes
 // less than 2% of the image it will be made
 // transparent.
 const BACKGROUND_CLEANUP_FACTOR: f32 = 0.02;
-
-const EDGE_DETECTION_RESOLUTION: u32 = 1;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -87,92 +91,249 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     info!("Locating markers...");
     let markers = Markers::find(&img)?;
 
-    info!("Coloring markers...");
+    // color markers for preview
     let red: Color = RGB::new(255, 0, 0).into();
     for marker in markers.markers() {
         marker.color(&mut img, &red);
     }
 
-    preview.save(&img)?;
-
-    info!("Generating average colors...");
-    let average_colors = AverageColors::new(&img, EDGE_DETECTION_RESOLUTION)?;
-
-    let mut average_colors_img = img.clone();
-    for x in 0..average_colors_img.width() {
-        for y in 0..average_colors_img.height() {
-            let xy = XY::new(x, y);
-            let color = average_colors.average_color(&xy);
-            let rgb = color.rgb();
-            average_colors_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
-        }
-    }
-    preview.save(&average_colors_img)?;
-
-    info!("Generating a gradient...");
-    let gradient = Gradient::new(&img, &average_colors)?;
-
-    let mut gradient_img = img.clone();
-    for x in 0..gradient_img.width() {
-        for y in 0..gradient_img.height() {
-            let xy = XY::new(x, y);
-            let gradient_point = gradient.get_gradient(&xy);
-
-            let l = (gradient_point.diff_l() + 1.0) / 2.0 * 100.0;
-            //let l = gradient_point.diff_l() * 100.0;
-            let color = LAB::new(l, gradient_point.diff_a() * 80.0, gradient_point.diff_b() * 80.0)?;
-            //let color = LAB::new(50.0, l, l)?;
-            let color: Color = color.into();
-            let color: RGB = color.rgb();
-
-            //let l = ((gradient_point.diff_b() + 1.0) / 2.0 * 255.0) as u8;
-            //let color: RGB = RGB::new(l, l, l);
-            gradient_img.put_pixel(x, y, Rgb([color.r(), color.g(), color.b()]).to_rgba());
-            //gradient_img.put_pixel(x, y, Rgb([gradient, gradient, gradient]).to_rgba());
-        }
-    }
-    preview.save(&gradient_img)?;
-
-    info!("Detecting edges...");
-    let edges = Edges::new(&img, &gradient)?;
-
-    let mut edges_img = img.clone();
-    for x in 0..edges_img.width() {
-        for y in 0..edges_img.height() {
-            let xy = XY::new(x, y);
-            let distance = edges.get_distance(&xy);
-
-            //let l = (gradient_point.diff_l() + 1.0) / 2.0 * 100.0;
-            //let l = gradient_point.diff_l() * 100.0;
-            let component = -1.0 + 2.0 * distance * 100.0;
-            let color = LAB::new(100.0, component, component)?;
-            //let color = LAB::new(50.0, l, l)?;
-            let color: Color = color.into();
-            let color: RGB = color.rgb();
-
-            //let l = ((gradient_point.diff_b() + 1.0) / 2.0 * 255.0) as u8;
-            //let color: RGB = RGB::new(l, l, l);
-            edges_img.put_pixel(x, y, Rgb([color.r(), color.g(), color.b()]).to_rgba());
-        }
-    }
-    preview.save(&edges_img)?;
-
     info!("Analysing background...");
     let background = Background::analyse(&img, &markers)?;
+    let background_difference = BackgroundDifference::new(&img, &background)?;
+
+    // generate background measurements preview
+    let mut preview_img = img.clone();
+    for x in 0..preview_img.width() {
+        for y in 0..preview_img.height() {
+            let xy = XY::new(x, y);
+            let color = background.check_color(&xy);
+            let color: RGB = color.rgb();
+            preview_img.put_pixel(x, y, Rgb([color.r(), color.g(), color.b()]).to_rgba());
+        }
+    }
+
+    // color background measurement points in the preview and in the actual image
+    for (area, color) in background.areas().iter() {
+        area.color(&mut preview_img, color);
+        area.color(&mut img, color);
+    }
+
+    preview.save(&img, "markers_and_background_measurements")?;
+    preview.save(&preview_img, "interpolated_background")?;
+
+    //info!("Generating average colors...");
+    //let average_colors = AverageColors::new(&img, EDGE_DETECTION_RESOLUTION)?;
+
+    //let mut average_colors_img = img.clone();
+    //for x in 0..average_colors_img.width() {
+    //    for y in 0..average_colors_img.height() {
+    //        let xy = XY::new(x, y);
+    //        let color = average_colors.average_color(&xy);
+    //        let rgb = color.rgb();
+    //        average_colors_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
+    //    }
+    //}
+    //preview.save(&average_colors_img)?;
+
+    //info!("Generating a gradient...");
+    //let gradient = Gradient::new(&img, &average_colors, &background)?;
+
+    //let mut gradient_img = img.clone();
+    //for x in 0..gradient_img.width() {
+    //    for y in 0..gradient_img.height() {
+    //        let xy = XY::new(x, y);
+    //        let gradient_point = gradient.get_gradient(&xy);
+
+    //        let l = (gradient_point.diff_l() + 1.0) / 2.0 * 100.0;
+    //        //let l = gradient_point.diff_l() * 100.0;
+    //        let color = LAB::new(l, gradient_point.diff_a() * 80.0, gradient_point.diff_b() * 80.0)?;
+    //        //let color = LAB::new(50.0, l, l)?;
+    //        let color: Color = color.into();
+    //        let color: RGB = color.rgb();
+
+    //        //let l = ((gradient_point.diff_b() + 1.0) / 2.0 * 255.0) as u8;
+    //        //let color: RGB = RGB::new(l, l, l);
+    //        gradient_img.put_pixel(x, y, Rgb([color.r(), color.g(), color.b()]).to_rgba());
+    //        //gradient_img.put_pixel(x, y, Rgb([gradient, gradient, gradient]).to_rgba());
+    //    }
+    //}
+    //preview.save(&gradient_img)?;
+
+    //info!("Detecting edges...");
+    //let edges = Edges::new(&img, &gradient)?;
+
+    //let mut edges_img = img.clone();
+    //for x in 0..edges_img.width() {
+    //    for y in 0..edges_img.height() {
+    //        let xy = XY::new(x, y);
+    //        let distance = edges.get_distance(&xy);
+
+    //        //let l = (gradient_point.diff_l() + 1.0) / 2.0 * 100.0;
+    //        //let l = gradient_point.diff_l() * 100.0;
+    //        let component = -1.0 + 2.0 * distance * 100.0;
+    //        let color = LAB::new(100.0, component, component)?;
+    //        //let color = LAB::new(50.0, l, l)?;
+    //        let color: Color = color.into();
+    //        let color: RGB = color.rgb();
+
+    //        //let l = ((gradient_point.diff_b() + 1.0) / 2.0 * 255.0) as u8;
+    //        //let color: RGB = RGB::new(l, l, l);
+    //        edges_img.put_pixel(x, y, Rgb([color.r(), color.g(), color.b()]).to_rgba());
+    //    }
+    //}
+    //preview.save(&edges_img)?;
+
+    // preview distances
+    //let mut preview_img = img.clone();
+    //for x in 0..preview_img.width() {
+    //    for y in 0..preview_img.height() {
+    //        let xy = XY::new(x, y);
+    //        let distance = background_difference.get(&xy);
+
+    //        //let color = LAB::new(80.0, distance.diff_l * 120.0, 0.0)?;
+    //        //let color: Color = color.into();
+    //        //let rgb = color.rgb();
+    //        //preview_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
+
+    //        let color = ((1.0 + distance.diff_l) / 2.0 * 255.0) as u8;
+    //        preview_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
+    //    }
+    //}
+    //preview.save(&preview_img, "background_distance_l")?;
+
+    //let mut preview_img = img.clone();
+    //for x in 0..preview_img.width() {
+    //    for y in 0..preview_img.height() {
+    //        let xy = XY::new(x, y);
+    //        let distance = background_difference.get(&xy);
+
+    //        //let color = LAB::new(80.0, distance.diff_a * 120.0, 0.0)?;
+    //        //let color: Color = color.into();
+    //        //let rgb = color.rgb();
+    //        //preview_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
+
+    //        let color = ((1.0 + distance.diff_a) / 2.0 * 255.0) as u8;
+    //        preview_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
+    //    }
+    //}
+    //preview.save(&preview_img, "background_distance_a")?;
+
+    //let mut preview_img = img.clone();
+    //for x in 0..preview_img.width() {
+    //    for y in 0..preview_img.height() {
+    //        let xy = XY::new(x, y);
+    //        let distance = background_difference.get(&xy);
+
+    //        //let color = LAB::new(80.0, distance.diff_b * 120.0, 0.0)?;
+    //        //let color: Color = color.into();
+    //        //let rgb = color.rgb();
+    //        //preview_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
+
+    //        let color = ((1.0 + distance.diff_b) / 2.0 * 255.0) as u8;
+    //        preview_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
+    //    }
+    //}
+    //preview.save(&preview_img, "background_distance_b")?;
+
+    //let mut preview_img = img.clone();
+    //for x in 0..preview_img.width() {
+    //    for y in 0..preview_img.height() {
+    //        let xy = XY::new(x, y);
+    //        let distance = background_difference.get(&xy);
+
+    //        let distance = (distance.diff_a.powi(2) + distance.diff_b.powi(2)).sqrt();
+    //        let distance = (1.4 + distance) / 2.8;
+
+    //        let color = LAB::new(80.0, distance * 120.0, 0.0)?;
+    //        let color: Color = color.into();
+    //        let rgb = color.rgb();
+    //        preview_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
+
+    //        let color = (distance / 1.5 * 255.0) as u8;
+    //        preview_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
+    //    }
+    //}
+    //preview.save(&preview_img, "background_distance_ab")?;
+
+    //let mut preview_img = img.clone();
+    //for x in 0..preview_img.width() {
+    //    for y in 0..preview_img.height() {
+    //        let xy = XY::new(x, y);
+    //        let distance = background_difference.get(&xy);
+
+    //        let distance =
+    //            (distance.diff_l.powi(2) + distance.diff_a.powi(2) + distance.diff_b.powi(2))
+    //                .sqrt();
+    //        let distance = (1.73 + distance) / 3.46;
+
+    //        let color = LAB::new(80.0, distance * 120.0, 0.0)?;
+    //        let color: Color = color.into();
+    //        let rgb = color.rgb();
+    //        preview_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
+
+    //        let color = (distance / 2.0 * 255.0) as u8;
+    //        preview_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
+    //    }
+    //}
+    //preview.save(&preview_img, "background_distance_lab")?;
 
     info!("Removing background...");
     let pixels = flood_fill(
         &img,
         markers.middle_of_top_edge(),
-        |xy: &XY, _color: &Color| {
-            let distance = edges.get_distance(xy);
+        |xy: &XY, color: &Color| {
+            let difference = background_difference.get(xy);
+
+            //let background_color = background_color.lab();
+            //let color = color.lab();
+            //let distance = background_color.distance(&color);
+
+            if difference.diff_l > 0.0
+                && difference.diff_l.abs() > BACKGROUND_DETECTION_FACTOR_L_POSITIVE
+            {
+                return false;
+            }
+
+            if difference.diff_l < 0.0
+                && difference.diff_l.abs() > BACKGROUND_DETECTION_FACTOR_L_NEGATIVE
+            {
+                return false;
+            }
+
+            if difference.diff_a > 0.0
+                && difference.diff_a.abs() > BACKGROUND_DETECTION_FACTOR_A_POSITIVE
+            {
+                return false;
+            }
+
+            if difference.diff_a < 0.0
+                && difference.diff_a.abs() > BACKGROUND_DETECTION_FACTOR_A_NEGATIVE
+            {
+                return false;
+            }
+
+            if difference.diff_b > 0.0
+                && difference.diff_b.abs() > BACKGROUND_DETECTION_FACTOR_B_POSITIVE
+            {
+                return false;
+            }
+
+            if difference.diff_b < 0.0
+                && difference.diff_b.abs() > BACKGROUND_DETECTION_FACTOR_B_NEGATIVE
+            {
+                return false;
+            }
+
+            true
+
+            //let distance = edges.get_distance(xy);
             //let gradient_color: LAB = gradient_color.lab();
 
             //let distance = (gradient_color.y().powi(4)
             //    + gradient_color.u().powi(2)
             //    + gradient_color.v().powi(2))
             //.sqrt();
-            distance < EDGE_DETECTION_FACTOR
+            //distance < EDGE_DETECTION_FACTOR
 
             //if gradient_color.y() > 0.1 {
             //    return false;
@@ -199,13 +360,6 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     for pixel in pixels {
         img.put_pixel(pixel.x(), pixel.y(), TRANSPARENT);
     }
-
-    info!("Coloring background measurements...");
-    for (area, color) in background.areas().iter() {
-        area.color(&mut img, color);
-    }
-
-    preview.save(&img)?;
 
     info!("Correcting perspective...");
     let tmp_dir = TempDir::new()?;
@@ -250,7 +404,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     let img = ImageReader::open(magick_output)?.decode()?;
     let mut img = img.to_rgba8();
 
-    preview.save(&img)?;
+    preview.save(&img, "corrected_perspective")?;
 
     info!("Cropping...");
     let width = img.width();
@@ -265,7 +419,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     );
     let mut img = img.to_image();
 
-    preview.save(&img)?;
+    preview.save(&img, "initial_crop")?;
 
     info!("Cleaning up background...");
     let mut skip: HashSet<XY> = HashSet::new();
@@ -300,7 +454,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
         }
     }
 
-    preview.save(&img)?;
+    preview.save(&img, "background_cleanup")?;
 
     info!("Final crop...");
     let path = Path::new(&input_path);
@@ -349,10 +503,13 @@ impl PreviewImagesSaver {
         })
     }
 
-    fn save(&mut self, img: &RgbaImage) -> Result<()> {
+    fn save(&mut self, img: &RgbaImage, name: &str) -> Result<()> {
         if self.save_intermediate_images {
             info!("Writing preview image...");
-            img.save(format!("{}_stage{}.png", self.stem, self.stage_number))?;
+            img.save(format!(
+                "{}_stage{}_{}.png",
+                self.stem, self.stage_number, name
+            ))?;
             self.stage_number += 1;
         }
         Ok(())
