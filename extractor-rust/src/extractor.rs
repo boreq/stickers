@@ -36,6 +36,12 @@ pub struct Markers {
 
 impl Markers {
     pub fn find(img: &RgbaImage) -> Result<Markers> {
+        if MARKER_SCAN_STEP * MARKER_SCAN_STEPS as f32 >= 0.5 {
+            return Err(anyhow!(
+                "marker search will go past the middle of width/height, you didn't mean to do this"
+            ));
+        }
+
         let top_left = Markers::find_marker(img, &Corner::TopLeft)?;
         let top_right = Markers::find_marker(img, &Corner::TopRight)?;
         let bottom_left = Markers::find_marker(img, &Corner::BottomLeft)?;
@@ -82,14 +88,8 @@ impl Markers {
     }
 
     fn find_marker(img: &RgbaImage, corner: &Corner) -> Result<Area> {
-        let step_x: u32 = cmp::max(
-            1,
-            (MARKER_SCAN_STEP * img.width() as f32) as u32,
-        );
-        let step_y: u32 = cmp::max(
-            1,
-            (MARKER_SCAN_STEP * img.height() as f32) as u32,
-        );
+        let step_x: u32 = cmp::max(1, (MARKER_SCAN_STEP * img.width() as f32) as u32);
+        let step_y: u32 = cmp::max(1, (MARKER_SCAN_STEP * img.height() as f32) as u32);
 
         let match_color = |_xy: &XY, color: &Color| {
             let yuv: YUV = color.yuv();
@@ -110,10 +110,6 @@ impl Markers {
                     Corner::BottomLeft => img.height() - 1 - (step_y_i * step_y),
                     Corner::BottomRight => img.height() - 1 - (step_y_i * step_y),
                 };
-
-                if x >= img.width() || y >= img.height() {
-                    return Err(anyhow!("here is a nickel kid, get yourself a bigger image"));
-                }
 
                 let pixels = flood_fill(img, XY { x, y }, match_color);
                 if !pixels.is_empty()
