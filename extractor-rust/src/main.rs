@@ -16,14 +16,14 @@ use tempfile::TempDir;
 
 const INITIAL_CROP_FACTOR: f32 = 0.05; // 5%;
 
-const BACKGROUND_DETECTION_FACTOR_L_POSITIVE: f32 = 0.3;
+const BACKGROUND_DETECTION_FACTOR_L_POSITIVE: f32 = 0.30;
 const BACKGROUND_DETECTION_FACTOR_L_NEGATIVE: f32 = 0.15;
 
-const BACKGROUND_DETECTION_FACTOR_A_POSITIVE: f32 = 0.05;
+const BACKGROUND_DETECTION_FACTOR_A_POSITIVE: f32 = 0.15;
 const BACKGROUND_DETECTION_FACTOR_A_NEGATIVE: f32 = 0.15;
 
-const BACKGROUND_DETECTION_FACTOR_B_POSITIVE: f32 = 0.3;
-const BACKGROUND_DETECTION_FACTOR_B_NEGATIVE: f32 = 0.3;
+const BACKGROUND_DETECTION_FACTOR_B_POSITIVE: f32 = 0.30;
+const BACKGROUND_DETECTION_FACTOR_B_NEGATIVE: f32 = 0.30;
 
 // If a group of non-transparent pixels constitutes
 // less than 2% of the image it will be made
@@ -82,7 +82,7 @@ fn main() -> Result<()> {
 fn extract(input_path: &str, output_directory: &str, save_intermediate_images: bool) -> Result<()> {
     let mut preview = PreviewImagesSaver::new(input_path, save_intermediate_images)?;
 
-    info!("Opening image {}...", input_path);
+    info!("Opening image {input_path}...");
     let img = ImageReader::open(input_path)?.decode()?;
     let mut img = img.to_rgba8();
 
@@ -97,6 +97,8 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
 
     info!("Analysing background...");
     let background = Background::analyse(&img, &markers)?;
+
+    info!("Calculating background difference...");
     let background_difference = BackgroundDifference::new(&img, &background)?;
 
     // generate background measurements preview
@@ -119,69 +121,6 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     preview.save(&img, "markers_and_background_measurements")?;
     preview.save(&preview_img, "interpolated_background")?;
 
-    //info!("Generating average colors...");
-    //let average_colors = AverageColors::new(&img, EDGE_DETECTION_RESOLUTION)?;
-
-    //let mut average_colors_img = img.clone();
-    //for x in 0..average_colors_img.width() {
-    //    for y in 0..average_colors_img.height() {
-    //        let xy = XY::new(x, y);
-    //        let color = average_colors.average_color(&xy);
-    //        let rgb = color.rgb();
-    //        average_colors_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
-    //    }
-    //}
-    //preview.save(&average_colors_img)?;
-
-    //info!("Generating a gradient...");
-    //let gradient = Gradient::new(&img, &average_colors, &background)?;
-
-    //let mut gradient_img = img.clone();
-    //for x in 0..gradient_img.width() {
-    //    for y in 0..gradient_img.height() {
-    //        let xy = XY::new(x, y);
-    //        let gradient_point = gradient.get_gradient(&xy);
-
-    //        let l = (gradient_point.diff_l() + 1.0) / 2.0 * 100.0;
-    //        //let l = gradient_point.diff_l() * 100.0;
-    //        let color = LAB::new(l, gradient_point.diff_a() * 80.0, gradient_point.diff_b() * 80.0)?;
-    //        //let color = LAB::new(50.0, l, l)?;
-    //        let color: Color = color.into();
-    //        let color: RGB = color.rgb();
-
-    //        //let l = ((gradient_point.diff_b() + 1.0) / 2.0 * 255.0) as u8;
-    //        //let color: RGB = RGB::new(l, l, l);
-    //        gradient_img.put_pixel(x, y, Rgb([color.r(), color.g(), color.b()]).to_rgba());
-    //        //gradient_img.put_pixel(x, y, Rgb([gradient, gradient, gradient]).to_rgba());
-    //    }
-    //}
-    //preview.save(&gradient_img)?;
-
-    //info!("Detecting edges...");
-    //let edges = Edges::new(&img, &gradient)?;
-
-    //let mut edges_img = img.clone();
-    //for x in 0..edges_img.width() {
-    //    for y in 0..edges_img.height() {
-    //        let xy = XY::new(x, y);
-    //        let distance = edges.get_distance(&xy);
-
-    //        //let l = (gradient_point.diff_l() + 1.0) / 2.0 * 100.0;
-    //        //let l = gradient_point.diff_l() * 100.0;
-    //        let component = -1.0 + 2.0 * distance * 100.0;
-    //        let color = LAB::new(100.0, component, component)?;
-    //        //let color = LAB::new(50.0, l, l)?;
-    //        let color: Color = color.into();
-    //        let color: RGB = color.rgb();
-
-    //        //let l = ((gradient_point.diff_b() + 1.0) / 2.0 * 255.0) as u8;
-    //        //let color: RGB = RGB::new(l, l, l);
-    //        edges_img.put_pixel(x, y, Rgb([color.r(), color.g(), color.b()]).to_rgba());
-    //    }
-    //}
-    //preview.save(&edges_img)?;
-
-    // preview distances
     //let mut preview_img = img.clone();
     //for x in 0..preview_img.width() {
     //    for y in 0..preview_img.height() {
@@ -232,48 +171,6 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     //    }
     //}
     //preview.save(&preview_img, "background_distance_b")?;
-
-    //let mut preview_img = img.clone();
-    //for x in 0..preview_img.width() {
-    //    for y in 0..preview_img.height() {
-    //        let xy = XY::new(x, y);
-    //        let distance = background_difference.get(&xy);
-
-    //        let distance = (distance.diff_a.powi(2) + distance.diff_b.powi(2)).sqrt();
-    //        let distance = (1.4 + distance) / 2.8;
-
-    //        let color = LAB::new(80.0, distance * 120.0, 0.0)?;
-    //        let color: Color = color.into();
-    //        let rgb = color.rgb();
-    //        preview_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
-
-    //        let color = (distance / 1.5 * 255.0) as u8;
-    //        preview_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
-    //    }
-    //}
-    //preview.save(&preview_img, "background_distance_ab")?;
-
-    //let mut preview_img = img.clone();
-    //for x in 0..preview_img.width() {
-    //    for y in 0..preview_img.height() {
-    //        let xy = XY::new(x, y);
-    //        let distance = background_difference.get(&xy);
-
-    //        let distance =
-    //            (distance.diff_l.powi(2) + distance.diff_a.powi(2) + distance.diff_b.powi(2))
-    //                .sqrt();
-    //        let distance = (1.73 + distance) / 3.46;
-
-    //        let color = LAB::new(80.0, distance * 120.0, 0.0)?;
-    //        let color: Color = color.into();
-    //        let rgb = color.rgb();
-    //        preview_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
-
-    //        let color = (distance / 2.0 * 255.0) as u8;
-    //        preview_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
-    //    }
-    //}
-    //preview.save(&preview_img, "background_distance_lab")?;
 
     info!("Removing background...");
     let pixels = flood_fill(
