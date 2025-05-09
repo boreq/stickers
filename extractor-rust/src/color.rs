@@ -2,9 +2,9 @@ use crate::errors::Result;
 use anyhow::anyhow;
 use image::Rgb;
 
-const Reference_X: f32 = 109.850;
-const Reference_Y: f32 = 100.000;
-const Reference_Z: f32 = 35.585;
+const REFERENCE_X: f32 = 109.850;
+const REFERENCE_Y: f32 = 100.000;
+const REFERENCE_Z: f32 = 35.585;
 
 pub struct Color {
     color: SomeColor,
@@ -126,40 +126,40 @@ impl From<&YUV> for RGB {
 impl From<&XYZ> for RGB {
     fn from(value: &XYZ) -> Self {
         //X, Y and Z input refer to a D65/2° standard illuminant.
-        //sR, sG and sB (standard RGB) output range = 0 ÷ 255
+        //sr, sg and sb (standard RGB) output range = 0 ÷ 255
 
-        let var_X = value.x / 100.0;
-        let var_Y = value.y / 100.0;
-        let var_Z = value.z / 100.0;
+        let var_x = value.x / 100.0;
+        let var_y = value.y / 100.0;
+        let var_z = value.z / 100.0;
 
-        let mut var_R = var_X * 3.2406 + var_Y * -1.5372 + var_Z * -0.4986;
-        let mut var_G = var_X * -0.9689 + var_Y * 1.8758 + var_Z * 0.0415;
-        let mut var_B = var_X * 0.0557 + var_Y * -0.2040 + var_Z * 1.0570;
+        let mut var_r = var_x * 3.2406 + var_y * -1.5372 + var_z * -0.4986;
+        let mut var_g = var_x * -0.9689 + var_y * 1.8758 + var_z * 0.0415;
+        let mut var_b = var_x * 0.0557 + var_y * -0.2040 + var_z * 1.0570;
 
-        if var_R > 0.0031308 {
-            var_R = 1.055 * (var_R.powf(1.0 / 2.4)) - 0.055
+        if var_r > 0.0031308 {
+            var_r = 1.055 * (var_r.powf(1.0 / 2.4)) - 0.055
         } else {
-            var_R *= 12.92
+            var_r *= 12.92
         }
-        if var_G > 0.0031308 {
-            var_G = 1.055 * (var_G.powf(1.0 / 2.4)) - 0.055
+        if var_g > 0.0031308 {
+            var_g = 1.055 * (var_g.powf(1.0 / 2.4)) - 0.055
         } else {
-            var_G *= 12.92
+            var_g *= 12.92
         }
-        if var_B > 0.0031308 {
-            var_B = 1.055 * (var_B.powf(1.0 / 2.4)) - 0.055
+        if var_b > 0.0031308 {
+            var_b = 1.055 * (var_b.powf(1.0 / 2.4)) - 0.055
         } else {
-            var_B *= 12.92
+            var_b *= 12.92
         }
 
-        let sR = var_R * 255.0;
-        let sG = var_G * 255.0;
-        let sB = var_B * 255.0;
+        let sr = var_r * 255.0;
+        let sg = var_g * 255.0;
+        let sb = var_b * 255.0;
 
         Self {
-            r: sR as u8,
-            g: sG as u8,
-            b: sB as u8,
+            r: sr as u8,
+            g: sg as u8,
+            b: sb as u8,
         }
     }
 }
@@ -276,31 +276,31 @@ impl From<&XYZ> for LAB {
     fn from(value: &XYZ) -> Self {
         //Reference-X, Y and Z refer to specific illuminants and observers.
         //Common reference values are available below in this same page.
-        let mut var_X = value.x / Reference_X;
-        let mut var_Y = value.y / Reference_Y;
-        let mut var_Z = value.z / Reference_Z;
+        let mut var_x = value.x / REFERENCE_X;
+        let mut var_y = value.y / REFERENCE_Y;
+        let mut var_z = value.z / REFERENCE_Z;
 
-        if var_X > 0.008856 {
-            var_X = var_X.powf(1.0 / 3.0);
+        if var_x > 0.008856 {
+            var_x = var_x.powf(1.0 / 3.0);
         } else {
-            var_X = (7.787 * var_X) + (16.0 / 116.0);
+            var_x = (7.787 * var_x) + (16.0 / 116.0);
         }
 
-        if var_Y > 0.008856 {
-            var_Y = var_Y.powf(1.0 / 3.0);
+        if var_y > 0.008856 {
+            var_y = var_y.powf(1.0 / 3.0);
         } else {
-            var_Y = (7.787 * var_Y) + (16.0 / 116.0);
+            var_y = (7.787 * var_y) + (16.0 / 116.0);
         }
 
-        if var_Z > 0.008856 {
-            var_Z = var_Z.powf(1.0 / 3.0);
+        if var_z > 0.008856 {
+            var_z = var_z.powf(1.0 / 3.0);
         } else {
-            var_Z = (7.787 * var_Z) + (16.0 / 116.0);
+            var_z = (7.787 * var_z) + (16.0 / 116.0);
         }
 
-        let l = (116.0 * var_Y) - 16.0;
-        let a = 500.0 * (var_X - var_Y);
-        let b = 200.0 * (var_Y - var_Z);
+        let l = (116.0 * var_y) - 16.0;
+        let a = 500.0 * (var_x - var_y);
+        let b = 200.0 * (var_y - var_z);
 
         Self { l, a, b }
     }
@@ -315,38 +315,38 @@ pub struct XYZ {
 
 impl From<&RGB> for XYZ {
     fn from(value: &RGB) -> Self {
-        //sR, sG and sB (Standard RGB) input range = 0 ÷ 255
+        //sr, sg and sb (Standard RGB) input range = 0 ÷ 255
         //X, Y and Z output refer to a D65/2° standard illuminant.
 
-        let mut var_R = value.r as f32 / 255.0;
-        let mut var_G = value.g as f32 / 255.0;
-        let mut var_B = value.b as f32 / 255.0;
+        let mut var_r = value.r as f32 / 255.0;
+        let mut var_g = value.g as f32 / 255.0;
+        let mut var_b = value.b as f32 / 255.0;
 
-        if var_R > 0.04045 {
-            var_R = ((var_R + 0.055) / 1.055).powf(2.4)
+        if var_r > 0.04045 {
+            var_r = ((var_r + 0.055) / 1.055).powf(2.4)
         } else {
-            var_R /= 12.92;
+            var_r /= 12.92;
         }
 
-        if var_G > 0.04045 {
-            var_G = ((var_G + 0.055) / 1.055).powf(2.4);
+        if var_g > 0.04045 {
+            var_g = ((var_g + 0.055) / 1.055).powf(2.4);
         } else {
-            var_G /= 12.92;
+            var_g /= 12.92;
         }
 
-        if var_B > 0.04045 {
-            var_B = ((var_B + 0.055) / 1.055).powf(2.4);
+        if var_b > 0.04045 {
+            var_b = ((var_b + 0.055) / 1.055).powf(2.4);
         } else {
-            var_B /= 12.92
+            var_b /= 12.92
         }
 
-        var_R *= 100.0;
-        var_G *= 100.0;
-        var_B *= 100.0;
+        var_r *= 100.0;
+        var_g *= 100.0;
+        var_b *= 100.0;
 
-        let x = var_R * 0.4124 + var_G * 0.3576 + var_B * 0.1805;
-        let y = var_R * 0.2126 + var_G * 0.7152 + var_B * 0.0722;
-        let z = var_R * 0.0193 + var_G * 0.1192 + var_B * 0.9505;
+        let x = var_r * 0.4124 + var_g * 0.3576 + var_b * 0.1805;
+        let y = var_r * 0.2126 + var_g * 0.7152 + var_b * 0.0722;
+        let z = var_r * 0.0193 + var_g * 0.1192 + var_b * 0.9505;
 
         Self { x, y, z }
     }
@@ -357,31 +357,31 @@ impl From<&LAB> for XYZ {
         //Reference-X, Y and Z refer to specific illuminants and observers.
         //Common reference values are available below in this same page.
 
-        let mut var_Y = (value.l + 16.0) / 116.0;
-        let mut var_X = value.a / 500.0 + var_Y;
-        let mut var_Z = var_Y - value.b / 200.0;
+        let mut var_y = (value.l + 16.0) / 116.0;
+        let mut var_x = value.a / 500.0 + var_y;
+        let mut var_z = var_y - value.b / 200.0;
 
-        if var_Y.powi(3) > 0.008856 {
-            var_Y = var_Y.powi(3);
+        if var_y.powi(3) > 0.008856 {
+            var_y = var_y.powi(3);
         } else {
-            var_Y = (var_Y - 16.0 / 116.0) / 7.787;
+            var_y = (var_y - 16.0 / 116.0) / 7.787;
         }
 
-        if var_X.powi(3) > 0.008856 {
-            var_X = var_X.powi(3);
+        if var_x.powi(3) > 0.008856 {
+            var_x = var_x.powi(3);
         } else {
-            var_X = (var_X - 16.0 / 116.0) / 7.787;
+            var_x = (var_x - 16.0 / 116.0) / 7.787;
         }
 
-        if var_Z.powi(3) > 0.008856 {
-            var_Z = var_Z.powi(3);
+        if var_z.powi(3) > 0.008856 {
+            var_z = var_z.powi(3);
         } else {
-            var_Z = (var_Z - 16.0 / 116.0) / 7.787;
+            var_z = (var_z - 16.0 / 116.0) / 7.787;
         }
 
-        let x = var_X * Reference_X;
-        let y = var_Y * Reference_Y;
-        let z = var_Z * Reference_Z;
+        let x = var_x * REFERENCE_X;
+        let y = var_y * REFERENCE_Y;
+        let z = var_z * REFERENCE_Z;
 
         Self { x, y, z }
     }

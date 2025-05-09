@@ -3,7 +3,7 @@ use crate::{
     errors::Result,
 };
 use anyhow::anyhow;
-use image::{GenericImageView, Pixel, Rgb, Rgba, RgbaImage};
+use image::{Pixel, Rgb, Rgba, RgbaImage};
 use std::{
     cmp,
     collections::{HashMap, HashSet},

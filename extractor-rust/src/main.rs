@@ -1,16 +1,14 @@
-#![feature(duration_constructors)]
-
 use anyhow::Context;
 use env_logger::Env;
 use extractor_rust::{
-    color::{Color, LAB, RGB},
+    color::{Color, RGB},
     errors::Result,
     extractor::{
         Background, BackgroundDifference, IdentifiedStickers, Markers, TRANSPARENT, XY, flood_fill,
         is_at_least_this_much_of_image,
     },
 };
-use image::{GenericImageView, ImageReader, Pixel, Rgb, RgbaImage, imageops::crop};
+use image::{ImageReader, Pixel, Rgb, RgbaImage, imageops::crop};
 use log::info;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::HashSet, fs, path::Path, process::Command};
@@ -281,12 +279,8 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     let pixels = flood_fill(
         &img,
         markers.middle_of_top_edge(),
-        |xy: &XY, color: &Color| {
+        |xy: &XY, _color: &Color| {
             let difference = background_difference.get(xy);
-
-            //let background_color = background_color.lab();
-            //let color = color.lab();
-            //let distance = background_color.distance(&color);
 
             if difference.diff_l > 0.0
                 && difference.diff_l.abs() > BACKGROUND_DETECTION_FACTOR_L_POSITIVE
@@ -325,36 +319,6 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
             }
 
             true
-
-            //let distance = edges.get_distance(xy);
-            //let gradient_color: LAB = gradient_color.lab();
-
-            //let distance = (gradient_color.y().powi(4)
-            //    + gradient_color.u().powi(2)
-            //    + gradient_color.v().powi(2))
-            //.sqrt();
-            //distance < EDGE_DETECTION_FACTOR
-
-            //if gradient_color.y() > 0.1 {
-            //    return false;
-            //}
-
-            //if gradient_color.u() > 0.02 {
-            //    return false;
-            //}
-
-            //if gradient_color.v() > 0.05 {
-            //    return false;
-            //}
-
-            //true
-
-            //let expected_color = background.check_color(xy);
-            //expected_color.similar(
-            //    yuv,
-            //    BACKGROUND_SIMILARITY_FACTOR_Y,
-            //    BACKGROUND_SIMILARITY_FACTOR_UV,
-            //)
         },
     );
     for pixel in pixels {
@@ -437,7 +401,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
                 continue;
             }
 
-            let pixels = flood_fill(&img, xy, |xy: &XY, color: &Color| {
+            let pixels = flood_fill(&img, xy, |xy: &XY, _color: &Color| {
                 let color = img.get_pixel(xy.x(), xy.y());
                 color.to_rgba() != TRANSPARENT
             });
