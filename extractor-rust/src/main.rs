@@ -69,7 +69,7 @@ fn main() -> Result<()> {
             extract(file_path, "./", sub_matches.get_flag("save-intermediate"))?;
             Ok(())
         }
-        Some(("extract", sub_matches)) => {
+        Some(("directory", sub_matches)) => {
             let source_directory = sub_matches.get_one::<String>("SOURCE_DIRECTORY").unwrap();
             let target_directory = sub_matches.get_one::<String>("TARGET_DIRECTORY").unwrap();
 
@@ -99,16 +99,13 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     let mut img = ImageWrapper::new(img);
 
     info!("Locating markers...");
-    let mut markers = Markers::find(&img)?;
+    let markers = Markers::find(&img)?;
 
     let red: Color = RGB::new(255, 0, 0).into();
     for marker in markers.markers() {
         marker.color(&mut img, &red);
     }
     preview.save(&img, "markers")?;
-
-    let mut img = markers.crop(&mut img)?;
-    preview.save(&img, "initial_crop")?;
 
     info!("Analysing background...");
     let t = Timer::new("analysing background");

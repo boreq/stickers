@@ -122,24 +122,6 @@ impl Markers {
         Err(anyhow!("not found"))
     }
 
-    pub fn crop<I: Image>(&mut self, img: &mut I) -> Result<I> {
-        let area = self.area(img)?;
-
-        let img = img.crop(area.left(), area.top(), area.width(), area.height());
-
-        self.top_left.left -= area.left;
-        self.top_right.left -= area.left;
-        self.bottom_left.left -= area.left;
-        self.bottom_right.left -= area.left;
-
-        self.top_left.top -= area.top;
-        self.top_right.top -= area.top;
-        self.bottom_left.top -= area.top;
-        self.bottom_right.top -= area.top;
-
-        Ok(img)
-    }
-
     pub fn middle_of_top_edge(&self) -> XY {
         let x = (self.top_left.center().x + self.top_right.center().x) / 2;
         let y = (self.top_left.center().y + self.top_right.center().y) / 2;
@@ -169,15 +151,6 @@ impl Markers {
 
     pub fn bottom_right(&self) -> &Area {
         &self.bottom_right
-    }
-
-    fn area<I: Image>(&self, img: &I) -> Result<Area> {
-        let left = cmp::min(self.top_left().left(), self.bottom_left().left());
-        let top = cmp::min(self.top_left().top(), self.top_right().top());
-        let right = cmp::max(self.top_right().right(), self.bottom_right().right());
-        let bottom = cmp::max(self.bottom_left().bottom(), self.bottom_right().bottom());
-
-        Area::new_from_coords(top, left, bottom, right, img)
     }
 }
 
@@ -256,7 +229,7 @@ impl Background {
                 for (area, color) in areas.iter() {
                     let yuv = color.yuv();
                     // powi to bias towards closer points
-                    let distance = 1.0 / (xy.distance(&area.center()).powi(3));
+                    let distance = 1.0 / (xy.distance(&area.center()).powi(2));
                     y += distance * yuv.y();
                     u += distance * yuv.u();
                     v += distance * yuv.v();
@@ -390,44 +363,6 @@ pub struct Area {
 }
 
 impl Area {
-    fn new<I: Image>(top: u32, left: u32, width: u32, height: u32, img: &I) -> Result<Self> {
-        if width == 0 || height == 0 {
-            return Err(anyhow!("width and height must be positive"));
-        }
-
-        let area = Area {
-            top,
-            left,
-            width,
-            height,
-        };
-
-        let max_x = img.width() - 1;
-        let max_y = img.height() - 1;
-
-        if area.left() > max_x || area.right() > max_x {
-            return Err(anyhow!("left or right is out of bounds"));
-        }
-
-        if area.bottom() > max_y || area.top() > max_y {
-            return Err(anyhow!("top or bottom is out of bounds"));
-        }
-
-        Ok(area)
-    }
-
-    fn new_from_coords<I: Image>(
-        top: u32,
-        left: u32,
-        bottom: u32,
-        right: u32,
-        img: &I,
-    ) -> Result<Self> {
-        let width = right - left + 1;
-        let height = bottom - top + 1;
-        Self::new(top, left, width, height, img)
-    }
-
     fn new_from_pixels(pixels: HashSet<XY>) -> Option<Area> {
         if pixels.is_empty() {
             return None;
@@ -791,18 +726,3 @@ pub trait Image {
     fn crop(&mut self, x: u32, y: u32, width: u32, height: u32) -> Self;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use test::Bencher;
-
-    #[test]
-    fn it_works() {
-        assert_eq!(4, add_two(2));
-    }
-
-    #[bench]
-    fn bench_add_two(b: &mut Bencher) {
-        b.iter(|| add_two(2));
-    }
-}

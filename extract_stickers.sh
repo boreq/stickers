@@ -9,4 +9,4 @@ source_dir="public/stickers/raw";
 source_dir=$(realpath $source_dir);
 
 echo "$source $target";
-(cd extractor-rust && cargo run --release -- extract "$source_dir" "$target_dir");
+(cd extractor-rust && cargo run --release -- directory "$source_dir" "$target_dir");
