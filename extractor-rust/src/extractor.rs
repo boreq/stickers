@@ -9,8 +9,13 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
-const MARKER_SCAN_STEP_IN_PERCENT: i32 = 1; // [%]
-const MARKER_SCAN_STEPS: u32 = 30; // If this is 30 and step is 1 then 30% will be scanned.
+// Specifies a fraction of image/height every which the image will be probed for markers, the
+// process fails after the specified number of steps. For example if 30 steps will be performed
+// every 0.01 then 30% of image width or height starting from the corners will be scanned before
+// the search fails if no markers are found.
+const MARKER_SCAN_STEP: f32 = 0.01;
+const MARKER_SCAN_STEPS: u32 = 30;
+
 const BACKGROUND_ANALYSIS_STEPS: usize = 10;
 
 // Marker must be at least 0.001% of the total image in pixel count.
@@ -79,11 +84,11 @@ impl Markers {
     fn find_marker(img: &RgbaImage, corner: &Corner) -> Result<Area> {
         let step_x: u32 = cmp::max(
             1,
-            (MARKER_SCAN_STEP_IN_PERCENT as f32 / 100.0 * img.width() as f32) as u32,
+            (MARKER_SCAN_STEP * img.width() as f32) as u32,
         );
         let step_y: u32 = cmp::max(
             1,
-            (MARKER_SCAN_STEP_IN_PERCENT as f32 / 100.0 * img.height() as f32) as u32,
+            (MARKER_SCAN_STEP * img.height() as f32) as u32,
         );
 
         let match_color = |_xy: &XY, color: &Color| {
