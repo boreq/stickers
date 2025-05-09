@@ -1,14 +1,18 @@
 use anyhow::Context;
+use clap::{Arg, ArgAction};
 use env_logger::Env;
 use extractor_rust::{
-    color::{Color, RGB},
+    color::{AlphaColor, Color, RGB},
     errors::Result,
     extractor::{
-        Background, BackgroundDifference, IdentifiedStickers, Markers, TRANSPARENT, XY, flood_fill,
+        Background, BackgroundDifference, IdentifiedStickers, Image, Markers, XY, flood_fill,
         is_at_least_this_much_of_image,
     },
 };
-use image::{ImageReader, Pixel, Rgb, RgbaImage, imageops::crop};
+use image::{
+    GenericImage, GenericImageView, ImageReader, Pixel, Rgba, RgbaImage,
+    imageops::{self},
+};
 use log::info;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{collections::HashSet, fs, path::Path, process::Command};
@@ -38,13 +42,19 @@ fn main() -> Result<()> {
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(
-            clap::Command::new("debug")
+            clap::Command::new("file")
                 .about("Debug the extraction process")
+                .arg(
+                    Arg::new("save-intermediate")
+                        .long("save-intermediate")
+                        .action(ArgAction::SetTrue)
+                        .help("save intermediate images for debugging purposes"),
+                )
                 .arg(clap::arg!(<INPUT_FILE> "The input file to process"))
                 .arg_required_else_help(true),
         )
         .subcommand(
-            clap::Command::new("extract")
+            clap::Command::new("directory")
                 .about("Run the extraction process for a directory")
                 .arg(clap::arg!(<SOURCE_DIRECTORY> "The source directory"))
                 .arg(clap::arg!(<TARGET_DIRECTORY> "The target directory")),
@@ -53,9 +63,9 @@ fn main() -> Result<()> {
     let matches = command.get_matches();
 
     match matches.subcommand() {
-        Some(("debug", sub_matches)) => {
+        Some(("file", sub_matches)) => {
             let file_path = sub_matches.get_one::<String>("INPUT_FILE").unwrap();
-            extract(file_path, "./", true)?;
+            extract(file_path, "./", sub_matches.get_flag("save-intermediate"))?;
             Ok(())
         }
         Some(("extract", sub_matches)) => {
@@ -81,19 +91,22 @@ fn main() -> Result<()> {
 
 fn extract(input_path: &str, output_directory: &str, save_intermediate_images: bool) -> Result<()> {
     let mut preview = PreviewImagesSaver::new(input_path, save_intermediate_images)?;
+    let transparent = &AlphaColor::new_transparent();
 
     info!("Opening image {input_path}...");
-    let img = ImageReader::open(input_path)?.decode()?;
-    let mut img = img.to_rgba8();
+    let img = ImageReader::open(input_path)?.decode()?.to_rgba8();
+    let mut img = ImageWrapper::new(img);
 
     info!("Locating markers...");
-    let markers = Markers::find(&img)?;
+    let mut markers = Markers::find(&img)?;
 
-    // color markers for preview
     let red: Color = RGB::new(255, 0, 0).into();
     for marker in markers.markers() {
         marker.color(&mut img, &red);
     }
+    preview.save(&img, "markers")?;
+
+    let mut img = markers.crop(&mut img)?;
 
     info!("Analysing background...");
     let background = Background::analyse(&img, &markers)?;
@@ -101,25 +114,26 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     info!("Calculating background difference...");
     let background_difference = BackgroundDifference::new(&img, &background)?;
 
-    // generate background measurements preview
-    let mut preview_img = img.clone();
-    for x in 0..preview_img.width() {
-        for y in 0..preview_img.height() {
-            let xy = XY::new(x, y);
-            let color = background.check_color(&xy);
-            let color: RGB = color.rgb();
-            preview_img.put_pixel(x, y, Rgb([color.r(), color.g(), color.b()]).to_rgba());
+    if save_intermediate_images {
+        // generate background measurements preview
+        let mut preview_img = img.clone();
+        for x in 0..preview_img.width() {
+            for y in 0..preview_img.height() {
+                let xy = XY::new(x, y);
+                let color = background.check_color(&xy);
+                preview_img.put_pixel(x, y, &color.opaque());
+            }
         }
-    }
 
-    // color background measurement points in the preview and in the actual image
-    for (area, color) in background.areas().iter() {
-        area.color(&mut preview_img, color);
-        area.color(&mut img, color);
-    }
+        // color background measurement points in the preview and in the actual image
+        for (area, color) in background.areas().iter() {
+            area.color(&mut preview_img, color);
+            area.color(&mut img, color);
+        }
 
-    preview.save(&img, "markers_and_background_measurements")?;
-    preview.save(&preview_img, "interpolated_background")?;
+        preview.save(&img, "markers_and_background_measurements")?;
+        preview.save(&preview_img, "interpolated_background")?;
+    }
 
     //let mut preview_img = img.clone();
     //for x in 0..preview_img.width() {
@@ -176,7 +190,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     let pixels = flood_fill(
         &img,
         markers.middle_of_top_edge(),
-        |xy: &XY, _color: &Color| {
+        |xy: &XY, _color: &AlphaColor| {
             let difference = background_difference.get(xy);
 
             if difference.diff_l > 0.0
@@ -219,7 +233,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
         },
     );
     for pixel in pixels {
-        img.put_pixel(pixel.x(), pixel.y(), TRANSPARENT);
+        img.put_pixel(pixel.x(), pixel.y(), transparent);
     }
 
     info!("Correcting perspective...");
@@ -228,7 +242,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     let magick_output = tmp_dir.path().join("output.png");
 
     info!("Writing image...");
-    img.save(&magick_input)?;
+    img.img.save(&magick_input)?;
 
     let perspective_params = format!(
         "{},{} {},{} {},{} {},{} {},{} {},{} {},{} {},{}",
@@ -262,8 +276,8 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
         .arg(&magick_output)
         .output()?;
 
-    let img = ImageReader::open(magick_output)?.decode()?;
-    let mut img = img.to_rgba8();
+    let img = ImageReader::open(magick_output)?.decode()?.to_rgba8();
+    let mut img = ImageWrapper::new(img);
 
     preview.save(&img, "corrected_perspective")?;
 
@@ -271,14 +285,12 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     let width = img.width();
     let height = img.height();
 
-    let img = crop(
-        &mut img,
+    let mut img = img.crop(
         (width as f32 * INITIAL_CROP_FACTOR) as u32,
         (height as f32 * INITIAL_CROP_FACTOR) as u32,
         (width as f32 * (1.0 - 2.0 * INITIAL_CROP_FACTOR)) as u32,
         (height as f32 * (1.0 - 2.0 * INITIAL_CROP_FACTOR)) as u32,
     );
-    let mut img = img.to_image();
 
     preview.save(&img, "initial_crop")?;
 
@@ -294,18 +306,18 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
             }
 
             let color = img.get_pixel(xy.x(), xy.y());
-            if color.to_rgba() == TRANSPARENT {
+            if color.is_transparent() {
                 continue;
             }
 
-            let pixels = flood_fill(&img, xy, |xy: &XY, _color: &Color| {
+            let pixels = flood_fill(&img, xy, |xy: &XY, _color: &AlphaColor| {
                 let color = img.get_pixel(xy.x(), xy.y());
-                color.to_rgba() != TRANSPARENT
+                !color.is_transparent()
             });
 
             if !is_at_least_this_much_of_image(pixels.len(), &img, BACKGROUND_CLEANUP_FACTOR) {
                 for pixel in &pixels {
-                    img.put_pixel(pixel.x(), pixel.y(), TRANSPARENT);
+                    img.put_pixel(pixel.x(), pixel.y(), transparent);
                 }
             }
 
@@ -323,14 +335,12 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
 
     let stickers = IdentifiedStickers::new(&img);
     for sticker in stickers.stickers() {
-        let img = crop(
-            &mut img,
+        let img = img.crop(
             sticker.area.left(),
             sticker.area.top(),
             sticker.area.width(),
             sticker.area.height(),
         );
-        let img = img.to_image();
 
         let output_path = Path::new(output_directory).join(format!(
             "{}_{}_{}.png",
@@ -364,15 +374,65 @@ impl PreviewImagesSaver {
         })
     }
 
-    fn save(&mut self, img: &RgbaImage, name: &str) -> Result<()> {
+    fn save(&mut self, img: &ImageWrapper, name: &str) -> Result<()> {
         if self.save_intermediate_images {
             info!("Writing preview image...");
-            img.save(format!(
+            img.img.save(format!(
                 "{}_stage{}_{}.png",
                 self.stem, self.stage_number, name
             ))?;
             self.stage_number += 1;
         }
         Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct ImageWrapper {
+    img: RgbaImage,
+}
+
+impl ImageWrapper {
+    fn new(img: RgbaImage) -> ImageWrapper {
+        Self { img }
+    }
+
+    fn save<Q>(&self, path: Q) -> Result<()>
+    where
+        Q: AsRef<Path>,
+    {
+        self.img.save(path)?;
+        Ok(())
+    }
+}
+
+impl Image for ImageWrapper {
+    fn width(&self) -> u32 {
+        self.img.width()
+    }
+
+    fn height(&self) -> u32 {
+        self.img.height()
+    }
+
+    fn get_pixel(&self, x: u32, y: u32) -> AlphaColor {
+        let pixel = self.img.get_pixel(x, y);
+        let channels = pixel.channels();
+        AlphaColor::new(
+            RGB::new(channels[0], channels[1], channels[2]).into(),
+            channels[3],
+        )
+    }
+
+    fn put_pixel(&mut self, x: u32, y: u32, color: &AlphaColor) {
+        let rgb = color.color().rgb();
+        let pixel = Rgba([rgb.r(), rgb.g(), rgb.b(), color.alpha()]);
+        self.img.put_pixel(x, y, pixel);
+    }
+
+    fn crop(&mut self, x: u32, y: u32, width: u32, height: u32) -> Self {
+        let img = imageops::crop(&mut self.img, x, y, width, height);
+        let img = img.to_image();
+        Self { img }
     }
 }

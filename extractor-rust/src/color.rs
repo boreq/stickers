@@ -1,11 +1,46 @@
 use crate::errors::Result;
 use anyhow::anyhow;
-use image::Rgb;
 
 const REFERENCE_X: f32 = 109.850;
 const REFERENCE_Y: f32 = 100.000;
 const REFERENCE_Z: f32 = 35.585;
 
+#[derive(Clone)]
+pub struct AlphaColor {
+    color: Color,
+    alpha: u8,
+}
+
+impl AlphaColor {
+    pub fn new(color: Color, alpha: u8) -> Self {
+        Self { color, alpha }
+    }
+
+    pub fn new_transparent() -> Self {
+        Self {
+            color: RGB::new(0, 0, 0).into(),
+            alpha: 0,
+        }
+    }
+
+    pub fn new_opaque(color: Color) -> Self {
+        Self { color, alpha: 255 }
+    }
+
+    pub fn color(&self) -> &Color {
+        &self.color
+    }
+
+    pub fn alpha(&self) -> u8 {
+        self.alpha
+    }
+
+    pub fn is_transparent(&self) -> bool {
+        self.alpha == 0
+    }
+}
+
+#[derive(Clone)]
 pub struct Color {
     color: SomeColor,
 }
@@ -52,6 +87,10 @@ impl Color {
             SomeColor::Lab(lab) => lab.clone(),
         }
     }
+
+    pub fn opaque(&self) -> AlphaColor {
+        AlphaColor::new_opaque(self.clone())
+    }
 }
 
 impl From<RGB> for Color {
@@ -75,13 +114,6 @@ impl From<LAB> for Color {
         Self {
             color: SomeColor::Lab(value),
         }
-    }
-}
-
-impl From<Rgb<u8>> for Color {
-    fn from(value: Rgb<u8>) -> Self {
-        let [r, g, b] = value.0;
-        RGB::new(r, g, b).into()
     }
 }
 
@@ -176,9 +208,6 @@ pub struct YUV {
 }
 
 impl YUV {
-    //fn from_rgb(pixel: &Rgb<u8>) -> YUV {
-    //    let channels = pixel.channels();
-    //}
     pub fn new(y: f32, u: f32, v: f32) -> Result<Self> {
         if y < 0.0 {
             return Err(anyhow!("y can't be negative"));
@@ -387,6 +416,7 @@ impl From<&LAB> for XYZ {
     }
 }
 
+#[derive(Clone)]
 enum SomeColor {
     Rgb(RGB),
     Yuv(YUV),

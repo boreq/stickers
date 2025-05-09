@@ -1,9 +1,9 @@
 use crate::{
-    color::{Color, LAB, RGB, YUV},
+    color::{AlphaColor, Color, LAB, RGB, YUV},
     errors::Result,
 };
 use anyhow::anyhow;
-use image::{Pixel, Rgb, Rgba, RgbaImage};
+use image::{GenericImageView, Pixel, Rgb};
 use std::{
     cmp,
     collections::{HashMap, HashSet},
@@ -25,8 +25,6 @@ const MARKER_THRESHOLD: f32 = 0.0001;
 // centers are this far away.
 const SNAP_STICKERS_THRESHOLD: f32 = 0.2;
 
-pub const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
-
 pub struct Markers {
     top_left: Area,
     top_right: Area,
@@ -35,7 +33,7 @@ pub struct Markers {
 }
 
 impl Markers {
-    pub fn find(img: &RgbaImage) -> Result<Markers> {
+    pub fn find<I: Image>(img: &I) -> Result<Markers> {
         if MARKER_SCAN_STEP * MARKER_SCAN_STEPS as f32 >= 0.5 {
             return Err(anyhow!(
                 "marker search will go past the middle of width/height, you didn't mean to do this"
@@ -87,12 +85,12 @@ impl Markers {
         })
     }
 
-    fn find_marker(img: &RgbaImage, corner: &Corner) -> Result<Area> {
+    fn find_marker<I: Image>(img: &I, corner: &Corner) -> Result<Area> {
         let step_x: u32 = cmp::max(1, (MARKER_SCAN_STEP * img.width() as f32) as u32);
         let step_y: u32 = cmp::max(1, (MARKER_SCAN_STEP * img.height() as f32) as u32);
 
-        let match_color = |_xy: &XY, color: &Color| {
-            let yuv: YUV = color.yuv();
+        let match_color = |_xy: &XY, color: &AlphaColor| {
+            let yuv: YUV = color.color().yuv();
             yuv.y() > 0.7 && yuv.u().abs() < 0.15 && yuv.v().abs() < 0.15
         };
 
@@ -122,6 +120,24 @@ impl Markers {
         }
 
         Err(anyhow!("not found"))
+    }
+
+    pub fn crop<I: Image>(&mut self, img: &mut I) -> Result<I> {
+        let area = self.area(img)?;
+
+        let img = img.crop(area.left(), area.top(), area.width(), area.height());
+
+        self.top_left.left -= area.left;
+        self.top_right.left -= area.left;
+        self.bottom_left.left -= area.left;
+        self.bottom_right.left -= area.left;
+
+        self.top_left.top -= area.top;
+        self.top_right.top -= area.top;
+        self.bottom_left.top -= area.top;
+        self.bottom_right.top -= area.top;
+
+        Ok(img)
     }
 
     pub fn middle_of_top_edge(&self) -> XY {
@@ -154,6 +170,15 @@ impl Markers {
     pub fn bottom_right(&self) -> &Area {
         &self.bottom_right
     }
+
+    fn area<I: Image>(&self, img: &I) -> Result<Area> {
+        let left = cmp::min(self.top_left().left(), self.bottom_left().left());
+        let top = cmp::min(self.top_left().top(), self.top_right().top());
+        let right = cmp::max(self.top_right().right(), self.bottom_right().right());
+        let bottom = cmp::max(self.bottom_left().bottom(), self.bottom_right().bottom());
+
+        Area::new_from_coords(top, left, bottom, right, img)
+    }
 }
 
 pub struct Background {
@@ -161,7 +186,7 @@ pub struct Background {
 }
 
 impl Background {
-    pub fn analyse(img: &RgbaImage, markers: &Markers) -> Result<Background> {
+    pub fn analyse<I: Image>(img: &I, markers: &Markers) -> Result<Background> {
         let mut areas = HashMap::new();
 
         let marker_width = markers.top_left.width;
@@ -248,9 +273,10 @@ enum Corner {
     BottomRight,
 }
 
-pub fn flood_fill<FM>(img: &RgbaImage, xy: XY, match_color: FM) -> HashSet<XY>
+pub fn flood_fill<I, FM>(img: &I, xy: XY, match_color: FM) -> HashSet<XY>
 where
-    FM: Fn(&XY, &Color) -> bool,
+    I: Image,
+    FM: Fn(&XY, &AlphaColor) -> bool,
 {
     let mut pixels = HashSet::new();
     let mut queue = vec![xy];
@@ -264,9 +290,7 @@ where
             continue;
         }
 
-        let pixel = img.get_pixel(xy.x, xy.y);
-        let rgb: RGB = pixel.to_rgb().into();
-        let color: Color = rgb.into();
+        let color = img.get_pixel(xy.x, xy.y);
 
         if !match_color(&xy, &color) {
             continue;
@@ -347,7 +371,7 @@ pub struct Area {
 }
 
 impl Area {
-    fn new(top: u32, left: u32, width: u32, height: u32, img: &RgbaImage) -> Result<Self> {
+    fn new<I: Image>(top: u32, left: u32, width: u32, height: u32, img: &I) -> Result<Self> {
         if width == 0 || height == 0 {
             return Err(anyhow!("width and height must be positive"));
         }
@@ -371,6 +395,18 @@ impl Area {
         }
 
         Ok(area)
+    }
+
+    fn new_from_coords<I: Image>(
+        top: u32,
+        left: u32,
+        bottom: u32,
+        right: u32,
+        img: &I,
+    ) -> Result<Self> {
+        let width = right - left + 1;
+        let height = bottom - top + 1;
+        Self::new(top, left, width, height, img)
     }
 
     fn new_from_pixels(pixels: HashSet<XY>) -> Option<Area> {
@@ -402,17 +438,17 @@ impl Area {
         xy.x >= self.left && xy.x <= self.right() && xy.y >= self.top && xy.y <= self.bottom()
     }
 
-    pub fn color(&self, img: &mut RgbaImage, color: &Color) {
-        let rgb = color.rgb();
+    pub fn color<I: Image>(&self, img: &mut I, color: &Color) {
+        let color = AlphaColor::new_opaque(color.clone());
 
         for x in self.left..self.right() {
             for y in self.top..self.bottom() {
-                img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
+                img.put_pixel(x, y, &color);
             }
         }
     }
 
-    fn average_color(&self, img: &RgbaImage) -> Result<Color> {
+    fn average_color<I: Image>(&self, img: &I) -> Result<Color> {
         //let mut y: Option<f32> = None;
         //let mut u: Option<f32> = None;
         //let mut v: Option<f32> = None;
@@ -424,7 +460,7 @@ impl Area {
         for px in self.left..(self.right() + 1) {
             for py in self.top..(self.bottom() + 1) {
                 let pixel = img.get_pixel(px, py);
-                let rgb: RGB = pixel.to_rgb().into();
+                let rgb: RGB = pixel.color().rgb();
                 //let color: Color = rgb.into();
                 //let yuv: YUV = color.yuv();
 
@@ -555,7 +591,7 @@ pub struct IdentifiedStickers {
 }
 
 impl IdentifiedStickers {
-    pub fn new(img: &RgbaImage) -> Self {
+    pub fn new<I: Image>(img: &I) -> Self {
         let mut areas: Vec<Area> = vec![];
 
         for ix in 0..img.width() {
@@ -568,13 +604,13 @@ impl IdentifiedStickers {
                 }
 
                 let color = img.get_pixel(xy.x(), xy.y());
-                if color.to_rgba() == TRANSPARENT {
+                if color.is_transparent() {
                     continue;
                 }
 
-                let pixels = flood_fill(img, xy, |xy: &XY, _color: &Color| {
+                let pixels = flood_fill(img, xy, |xy: &XY, _color: &AlphaColor| {
                     let color = img.get_pixel(xy.x(), xy.y());
-                    color.to_rgba() != TRANSPARENT
+                    !color.is_transparent()
                 });
 
                 let area = Area::new_from_pixels(pixels).unwrap();
@@ -651,69 +687,69 @@ impl IdentifiedStickers {
     }
 }
 
-pub struct AverageColors {
-    averaged_area_size: u32,
-    average_colors: Vec<Vec<Color>>,
-}
-
-impl AverageColors {
-    pub fn new(img: &RgbaImage, averaged_area_size: u32) -> Result<Self> {
-        if averaged_area_size == 0 {
-            return Err(anyhow!("averaged area size can't be zero"));
-        }
-
-        let mut nx = img.width() / averaged_area_size;
-        if img.width() % averaged_area_size != 0 {
-            nx += 1;
-        }
-        let mut ny = img.height() / averaged_area_size;
-        if img.height() % averaged_area_size != 0 {
-            ny += 1;
-        }
-
-        let mut average_colors = vec![];
-        for xi in 0..nx {
-            average_colors.push(vec![]);
-
-            for yi in 0..ny {
-                let left = xi * averaged_area_size;
-                let top = yi * averaged_area_size;
-
-                let max_x = img.width() - 1;
-                let max_y = img.height() - 1;
-
-                let mut width = averaged_area_size;
-                let mut height = averaged_area_size;
-                if left + width - 1 > max_x {
-                    width = max_x - left;
-                }
-                if top + height - 1 > max_y {
-                    height = max_y - top;
-                }
-
-                let area = Area::new(top, left, width, height, img)?;
-                let average_color = area.average_color(img)?;
-
-                average_colors[xi as usize].push(average_color);
-            }
-        }
-
-        Ok(Self {
-            averaged_area_size,
-            average_colors,
-        })
-    }
-
-    pub fn averaged_area_size(&self) -> u32 {
-        self.averaged_area_size
-    }
-
-    pub fn average_color(&self, xy: &XY) -> &Color {
-        let xi = xy.x() / self.averaged_area_size;
-        let yi = xy.y() / self.averaged_area_size;
-        &self.average_colors[xi as usize][yi as usize]
-    }
-}
+//pub struct AverageColors {
+//    averaged_area_size: u32,
+//    average_colors: Vec<Vec<Color>>,
+//}
+//
+//impl AverageColors {
+//    pub fn new<I: Image>(img: &, averaged_area_size: u32) -> Result<Self> {
+//        if averaged_area_size == 0 {
+//            return Err(anyhow!("averaged area size can't be zero"));
+//        }
+//
+//        let mut nx = img.width() / averaged_area_size;
+//        if img.width() % averaged_area_size != 0 {
+//            nx += 1;
+//        }
+//        let mut ny = img.height() / averaged_area_size;
+//        if img.height() % averaged_area_size != 0 {
+//            ny += 1;
+//        }
+//
+//        let mut average_colors = vec![];
+//        for xi in 0..nx {
+//            average_colors.push(vec![]);
+//
+//            for yi in 0..ny {
+//                let left = xi * averaged_area_size;
+//                let top = yi * averaged_area_size;
+//
+//                let max_x = img.width() - 1;
+//                let max_y = img.height() - 1;
+//
+//                let mut width = averaged_area_size;
+//                let mut height = averaged_area_size;
+//                if left + width - 1 > max_x {
+//                    width = max_x - left;
+//                }
+//                if top + height - 1 > max_y {
+//                    height = max_y - top;
+//                }
+//
+//                let area = Area::new(top, left, width, height, img)?;
+//                let average_color = area.average_color(img)?;
+//
+//                average_colors[xi as usize].push(average_color);
+//            }
+//        }
+//
+//        Ok(Self {
+//            averaged_area_size,
+//            average_colors,
+//        })
+//    }
+//
+//    pub fn averaged_area_size(&self) -> u32 {
+//        self.averaged_area_size
+//    }
+//
+//    pub fn average_color(&self, xy: &XY) -> &Color {
+//        let xi = xy.x() / self.averaged_area_size;
+//        let yi = xy.y() / self.averaged_area_size;
+//        &self.average_colors[xi as usize][yi as usize]
+//    }
+//}
 
 pub struct NormalisedBackgroundDifference {
     pub diff_l: f32, // [-1, 1]
@@ -726,12 +762,21 @@ pub struct BackgroundDifference {
 }
 
 impl BackgroundDifference {
-    pub fn new(img: &RgbaImage, background: &Background) -> Result<Self> {
+    pub fn new<I: Image>(img: &I, background: &Background) -> Result<Self> {
         let mut distances = vec![];
 
         let mut max_l = 0.0;
         let mut max_a = 0.0;
         let mut max_b = 0.0;
+
+        //println!("1");
+
+        //for xi in 0..img.width() {
+        //    distances.push(vec![NormalisedBackgroundDifference / ]);
+        //}
+
+        //img.enumerate_pixels().for_each(|(x, y, pixel)| {
+        //});
 
         for xi in 0..img.width() {
             distances.push(vec![]);
@@ -740,8 +785,8 @@ impl BackgroundDifference {
                 let xy = XY::new(xi, yi);
 
                 let background_color: LAB = background.check_color(&xy).lab();
-                let color: Color = img.get_pixel(xy.x(), xy.y()).to_rgb().into();
-                let color: LAB = color.lab();
+                let alpha_color = img.get_pixel(xy.x(), xy.y());
+                let color = alpha_color.color().lab();
 
                 let distance_l = color.l() - background_color.l();
                 let distance_a = color.a() - background_color.a();
@@ -767,19 +812,17 @@ impl BackgroundDifference {
             }
         }
 
-        let distances = distances
-            .iter()
-            .map(|column| {
-                column
-                    .iter()
-                    .map(|distance| NormalisedBackgroundDifference {
-                        diff_l: distance.diff_l / max_l,
-                        diff_a: distance.diff_a / max_a,
-                        diff_b: distance.diff_b / max_b,
-                    })
-                    .collect()
-            })
-            .collect();
+        println!("2");
+
+        for xi in 0..img.width() {
+            for yi in 0..img.height() {
+                distances[xi as usize][yi as usize].diff_l /= max_l;
+                distances[xi as usize][yi as usize].diff_a /= max_a;
+                distances[xi as usize][yi as usize].diff_b /= max_b;
+            }
+        }
+
+        println!("3");
 
         Ok(Self { distances })
     }
@@ -789,6 +832,39 @@ impl BackgroundDifference {
     }
 }
 
-pub fn is_at_least_this_much_of_image(pixels: usize, img: &RgbaImage, threshold: f32) -> bool {
+pub fn is_at_least_this_much_of_image<I: Image>(pixels: usize, img: &I, threshold: f32) -> bool {
     (pixels as f32) >= ((img.width() * img.height()) as f32 * threshold)
 }
+
+pub trait Image {
+    fn width(&self) -> u32;
+    fn height(&self) -> u32;
+    fn get_pixel(&self, x: u32, y: u32) -> AlphaColor;
+    fn put_pixel(&mut self, x: u32, y: u32, color: &AlphaColor);
+    fn crop(&mut self, x: u32, y: u32, width: u32, height: u32) -> Self;
+}
+
+//struct Image<'a, T> where
+//T: GenericImageView<Pixel = Rgba<u8>> {
+//    img: &'a mut T,
+//}
+//
+//impl<'a, T> Image<'a, T> {
+//    pub fn new(img: &'a mut T) -> Image<'a> {
+//        Self{
+//            img,
+//        }
+//    }
+//
+//    fn width(&self) -> u32 {
+//        self.img.width()
+//    }
+//
+//    fn height(&self) -> u32 {
+//        self.img.height()
+//    }
+//
+//    fn get_pixel(&self, x: u32, y: u32) -> Rgba<u8> {
+//        self.img.get_pixel(x, y)
+//    }
+//}
