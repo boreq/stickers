@@ -13,9 +13,9 @@ pub struct Color {
 impl Color {
     pub fn rgb(&self) -> RGB {
         match &self.color {
-            SomeColor::RGB(rgb) => rgb.clone(),
-            SomeColor::YUV(yuv) => yuv.into(),
-            SomeColor::LAB(lab) => {
+            SomeColor::Rgb(rgb) => rgb.clone(),
+            SomeColor::Yuv(yuv) => yuv.into(),
+            SomeColor::Lab(lab) => {
                 let xyz: XYZ = lab.into();
                 let rgb: RGB = (&xyz).into();
                 rgb
@@ -25,9 +25,9 @@ impl Color {
 
     pub fn yuv(&self) -> YUV {
         match &self.color {
-            SomeColor::RGB(rgb) => rgb.into(),
-            SomeColor::YUV(yuv) => yuv.clone(),
-            SomeColor::LAB(lab) => {
+            SomeColor::Rgb(rgb) => rgb.into(),
+            SomeColor::Yuv(yuv) => yuv.clone(),
+            SomeColor::Lab(lab) => {
                 let xyz: XYZ = lab.into();
                 let rgb: RGB = (&xyz).into();
                 let yuv: YUV = (&rgb).into();
@@ -38,18 +38,18 @@ impl Color {
 
     pub fn lab(&self) -> LAB {
         match &self.color {
-            SomeColor::RGB(rgb) => {
+            SomeColor::Rgb(rgb) => {
                 let xyz: XYZ = rgb.into();
                 let lab: LAB = (&xyz).into();
                 lab
             }
-            SomeColor::YUV(yuv) => {
+            SomeColor::Yuv(yuv) => {
                 let rgb: RGB = yuv.into();
                 let xyz: XYZ = (&rgb).into();
                 let lab: LAB = (&xyz).into();
                 lab
             }
-            SomeColor::LAB(lab) => lab.clone(),
+            SomeColor::Lab(lab) => lab.clone(),
         }
     }
 }
@@ -57,7 +57,7 @@ impl Color {
 impl From<RGB> for Color {
     fn from(value: RGB) -> Self {
         Self {
-            color: SomeColor::RGB(value),
+            color: SomeColor::Rgb(value),
         }
     }
 }
@@ -65,7 +65,7 @@ impl From<RGB> for Color {
 impl From<YUV> for Color {
     fn from(value: YUV) -> Self {
         Self {
-            color: SomeColor::YUV(value),
+            color: SomeColor::Yuv(value),
         }
     }
 }
@@ -73,7 +73,7 @@ impl From<YUV> for Color {
 impl From<LAB> for Color {
     fn from(value: LAB) -> Self {
         Self {
-            color: SomeColor::LAB(value),
+            color: SomeColor::Lab(value),
         }
     }
 }
@@ -388,7 +388,7 @@ impl From<&LAB> for XYZ {
 }
 
 enum SomeColor {
-    RGB(RGB),
-    YUV(YUV),
-    LAB(LAB),
+    Rgb(RGB),
+    Yuv(YUV),
+    Lab(LAB),
 }

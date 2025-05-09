@@ -734,7 +734,6 @@ impl BackgroundDifference {
         let mut max_b = 0.0;
 
         for xi in 0..img.width() {
-            let xi = xi;
             distances.push(vec![]);
 
             for yi in 0..img.height() {
