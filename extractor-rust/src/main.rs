@@ -1,5 +1,6 @@
 use anyhow::Context;
 use clap::{Arg, ArgAction};
+use core::panic;
 use env_logger::Env;
 use extractor_rust::{
     color::{AlphaColor, Color, RGB},
@@ -15,7 +16,7 @@ use image::{
 };
 use log::info;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use std::{collections::HashSet, fs, path::Path, process::Command};
+use std::{collections::HashSet, fs, path::Path, process::Command, time::Instant};
 use tempfile::TempDir;
 
 const INITIAL_CROP_FACTOR: f32 = 0.05; // 5%;
@@ -110,11 +111,14 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     preview.save(&img, "initial_crop")?;
 
     info!("Analysing background...");
+    let t = Timer::new("analysing background");
     let background = Background::analyse(&img, &markers)?;
+    t.done();
 
-    info!("Calculating background difference...");
+    info!("Calculating background deltas...");
+    let t = Timer::new("calculating background deltas");
     let background_difference = BackgroundDifference::new(&img, &background)?;
-    info!("Done...");
+    t.done();
 
     if save_intermediate_images {
         // generate background measurements preview
@@ -135,58 +139,46 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
 
         preview.save(&img, "markers_and_background_measurements")?;
         preview.save(&preview_img, "interpolated_background")?;
+
+        let mut preview_img = img.clone();
+        for x in 0..preview_img.width() {
+            for y in 0..preview_img.height() {
+                let xy = XY::new(x, y);
+                let distance = background_difference.get(&xy);
+
+                let color = ((1.0 + distance.diff_l) / 2.0 * 255.0) as u8;
+                let color: Color = RGB::new(color, color, color).into();
+                preview_img.put_pixel(x, y, &color.opaque());
+            }
+        }
+        preview.save(&preview_img, "background_distance_l")?;
+
+        let mut preview_img = img.clone();
+        for x in 0..preview_img.width() {
+            for y in 0..preview_img.height() {
+                let xy = XY::new(x, y);
+                let distance = background_difference.get(&xy);
+
+                let color = ((1.0 + distance.diff_a) / 2.0 * 255.0) as u8;
+                let color: Color = RGB::new(color, color, color).into();
+                preview_img.put_pixel(x, y, &color.opaque());
+            }
+        }
+        preview.save(&preview_img, "background_distance_a")?;
+
+        let mut preview_img = img.clone();
+        for x in 0..preview_img.width() {
+            for y in 0..preview_img.height() {
+                let xy = XY::new(x, y);
+                let distance = background_difference.get(&xy);
+
+                let color = ((1.0 + distance.diff_b) / 2.0 * 255.0) as u8;
+                let color: Color = RGB::new(color, color, color).into();
+                preview_img.put_pixel(x, y, &color.opaque());
+            }
+        }
+        preview.save(&preview_img, "background_distance_b")?;
     }
-
-    //let mut preview_img = img.clone();
-    //for x in 0..preview_img.width() {
-    //    for y in 0..preview_img.height() {
-    //        let xy = XY::new(x, y);
-    //        let distance = background_difference.get(&xy);
-
-    //        //let color = LAB::new(80.0, distance.diff_l * 120.0, 0.0)?;
-    //        //let color: Color = color.into();
-    //        //let rgb = color.rgb();
-    //        //preview_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
-
-    //        let color = ((1.0 + distance.diff_l) / 2.0 * 255.0) as u8;
-    //        preview_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
-    //    }
-    //}
-    //preview.save(&preview_img, "background_distance_l")?;
-
-    //let mut preview_img = img.clone();
-    //for x in 0..preview_img.width() {
-    //    for y in 0..preview_img.height() {
-    //        let xy = XY::new(x, y);
-    //        let distance = background_difference.get(&xy);
-
-    //        //let color = LAB::new(80.0, distance.diff_a * 120.0, 0.0)?;
-    //        //let color: Color = color.into();
-    //        //let rgb = color.rgb();
-    //        //preview_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
-
-    //        let color = ((1.0 + distance.diff_a) / 2.0 * 255.0) as u8;
-    //        preview_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
-    //    }
-    //}
-    //preview.save(&preview_img, "background_distance_a")?;
-
-    //let mut preview_img = img.clone();
-    //for x in 0..preview_img.width() {
-    //    for y in 0..preview_img.height() {
-    //        let xy = XY::new(x, y);
-    //        let distance = background_difference.get(&xy);
-
-    //        //let color = LAB::new(80.0, distance.diff_b * 120.0, 0.0)?;
-    //        //let color: Color = color.into();
-    //        //let rgb = color.rgb();
-    //        //preview_img.put_pixel(x, y, Rgb([rgb.r(), rgb.g(), rgb.b()]).to_rgba());
-
-    //        let color = ((1.0 + distance.diff_b) / 2.0 * 255.0) as u8;
-    //        preview_img.put_pixel(x, y, Rgb([color, color, color]).to_rgba());
-    //    }
-    //}
-    //preview.save(&preview_img, "background_distance_b")?;
 
     info!("Removing background...");
     let pixels = flood_fill(
@@ -294,7 +286,7 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
         (height as f32 * (1.0 - 2.0 * INITIAL_CROP_FACTOR)) as u32,
     );
 
-    preview.save(&img, "initial_crop")?;
+    preview.save(&img, "pre_background_cleanup_crop")?;
 
     info!("Cleaning up background...");
     let mut skip: HashSet<XY> = HashSet::new();
@@ -436,5 +428,32 @@ impl Image for ImageWrapper {
         let img = imageops::crop(&mut self.img, x, y, width, height);
         let img = img.to_image();
         Self { img }
+    }
+}
+
+struct Timer {
+    name: String,
+    started: Instant,
+    stopped: bool,
+}
+
+impl Timer {
+    pub fn new(name: impl Into<String>) -> Self {
+        let name = name.into();
+
+        Self {
+            name,
+            started: Instant::now(),
+            stopped: false,
+        }
+    }
+
+    pub fn done(&self) {
+        if self.stopped {
+            panic!("timer was already stopped");
+        }
+
+        let duration = self.started.elapsed();
+        info!("Done {} in {}ms", self.name, duration.as_millis());
     }
 }

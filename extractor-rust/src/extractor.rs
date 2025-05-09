@@ -183,6 +183,7 @@ impl Markers {
 
 pub struct Background {
     areas: HashMap<Area, Color>,
+    interpolated_colors: Vec<Vec<Color>>,
 }
 
 impl Background {
@@ -236,29 +237,47 @@ impl Background {
             areas.insert(area, color);
         }
 
-        Ok(Background { areas })
-    }
+        let row_size = img.width() as usize;
+        let column_size = img.height() as usize;
 
-    pub fn check_color(&self, xy: &XY) -> Color {
-        let mut y = 0.0;
-        let mut u = 0.0;
-        let mut v = 0.0;
-        let mut distances = 0.0;
+        let mut interpolated_colors = Vec::with_capacity(row_size);
 
-        for (area, color) in self.areas.iter() {
-            let yuv = color.yuv();
-            // powi to bias towards closer points
-            let distance = 1.0 / (xy.distance(&area.center()).powi(3));
-            //let distance = 1.0 / xy.distance(&area.center());
-            y += distance * yuv.y();
-            u += distance * yuv.u();
-            v += distance * yuv.v();
-            distances += distance;
+        for x in 0..row_size {
+            let mut column = Vec::with_capacity(column_size);
+
+            for y in 0..column_size {
+                let xy = XY::new(x as u32, y as u32);
+
+                let mut y = 0.0;
+                let mut u = 0.0;
+                let mut v = 0.0;
+                let mut distances = 0.0;
+
+                for (area, color) in areas.iter() {
+                    let yuv = color.yuv();
+                    // powi to bias towards closer points
+                    let distance = 1.0 / (xy.distance(&area.center()).powi(3));
+                    y += distance * yuv.y();
+                    u += distance * yuv.u();
+                    v += distance * yuv.v();
+                    distances += distance;
+                }
+
+                let yuv = YUV::new(y / distances, u / distances, v / distances)?;
+                column.push(yuv.into());
+            }
+
+            interpolated_colors.push(column);
         }
 
-        YUV::new(y / distances, u / distances, v / distances)
-            .unwrap()
-            .into()
+        Ok(Background {
+            areas,
+            interpolated_colors,
+        })
+    }
+
+    pub fn check_color(&self, xy: &XY) -> &Color {
+        &self.interpolated_colors[xy.x as usize][xy.y as usize]
     }
 
     pub fn areas(&self) -> &HashMap<Area, Color> {
@@ -770,4 +789,20 @@ pub trait Image {
     fn get_pixel(&self, x: u32, y: u32) -> AlphaColor;
     fn put_pixel(&mut self, x: u32, y: u32, color: &AlphaColor);
     fn crop(&mut self, x: u32, y: u32, width: u32, height: u32) -> Self;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test::Bencher;
+
+    #[test]
+    fn it_works() {
+        assert_eq!(4, add_two(2));
+    }
+
+    #[bench]
+    fn bench_add_two(b: &mut Bencher) {
+        b.iter(|| add_two(2));
+    }
 }
