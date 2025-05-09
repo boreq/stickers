@@ -10,7 +10,7 @@ use extractor_rust::{
     },
 };
 use image::{
-    GenericImage, GenericImageView, ImageReader, Pixel, Rgba, RgbaImage,
+    ImageReader, Pixel, Rgba, RgbaImage,
     imageops::{self},
 };
 use log::info;
@@ -107,12 +107,14 @@ fn extract(input_path: &str, output_directory: &str, save_intermediate_images: b
     preview.save(&img, "markers")?;
 
     let mut img = markers.crop(&mut img)?;
+    preview.save(&img, "initial_crop")?;
 
     info!("Analysing background...");
     let background = Background::analyse(&img, &markers)?;
 
     info!("Calculating background difference...");
     let background_difference = BackgroundDifference::new(&img, &background)?;
+    info!("Done...");
 
     if save_intermediate_images {
         // generate background measurements preview

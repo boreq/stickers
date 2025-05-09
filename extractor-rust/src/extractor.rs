@@ -3,7 +3,7 @@ use crate::{
     errors::Result,
 };
 use anyhow::anyhow;
-use image::{GenericImageView, Pixel, Rgb};
+use image::Rgb;
 use std::{
     cmp,
     collections::{HashMap, HashSet},
@@ -763,23 +763,17 @@ pub struct BackgroundDifference {
 
 impl BackgroundDifference {
     pub fn new<I: Image>(img: &I, background: &Background) -> Result<Self> {
-        let mut distances = vec![];
+        let row_size = img.width() as usize;
+        let column_size = img.height() as usize;
+
+        let mut distances = Vec::with_capacity(row_size);
 
         let mut max_l = 0.0;
         let mut max_a = 0.0;
         let mut max_b = 0.0;
 
-        //println!("1");
-
-        //for xi in 0..img.width() {
-        //    distances.push(vec![NormalisedBackgroundDifference / ]);
-        //}
-
-        //img.enumerate_pixels().for_each(|(x, y, pixel)| {
-        //});
-
         for xi in 0..img.width() {
-            distances.push(vec![]);
+            let mut column = Vec::with_capacity(column_size);
 
             for yi in 0..img.height() {
                 let xy = XY::new(xi, yi);
@@ -804,15 +798,15 @@ impl BackgroundDifference {
                     max_b = distance_b;
                 }
 
-                distances[xi as usize].push(NormalisedBackgroundDifference {
+                column.push(NormalisedBackgroundDifference {
                     diff_l: distance_l,
                     diff_a: distance_a,
                     diff_b: distance_b,
                 });
             }
-        }
 
-        println!("2");
+            distances.push(column);
+        }
 
         for xi in 0..img.width() {
             for yi in 0..img.height() {
@@ -821,8 +815,6 @@ impl BackgroundDifference {
                 distances[xi as usize][yi as usize].diff_b /= max_b;
             }
         }
-
-        println!("3");
 
         Ok(Self { distances })
     }
@@ -843,28 +835,3 @@ pub trait Image {
     fn put_pixel(&mut self, x: u32, y: u32, color: &AlphaColor);
     fn crop(&mut self, x: u32, y: u32, width: u32, height: u32) -> Self;
 }
-
-//struct Image<'a, T> where
-//T: GenericImageView<Pixel = Rgba<u8>> {
-//    img: &'a mut T,
-//}
-//
-//impl<'a, T> Image<'a, T> {
-//    pub fn new(img: &'a mut T) -> Image<'a> {
-//        Self{
-//            img,
-//        }
-//    }
-//
-//    fn width(&self) -> u32 {
-//        self.img.width()
-//    }
-//
-//    fn height(&self) -> u32 {
-//        self.img.height()
-//    }
-//
-//    fn get_pixel(&self, x: u32, y: u32) -> Rgba<u8> {
-//        self.img.get_pixel(x, y)
-//    }
-//}
